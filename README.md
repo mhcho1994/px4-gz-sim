@@ -1,4 +1,4 @@
-# px4_gz_multidrone
+# px4-gz-multidrone
 Repository for PX4-ROS-Gazebo SITL Simulator
 This repository is created for personal research and for testing control algorithms.
 For original repository with recent versions of PX4, GZ, Gazebo-Ignition,
