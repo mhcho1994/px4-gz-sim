@@ -1,6 +1,7 @@
 # px4-gz-multidrone
-Repository for PX4-ROS-Gazebo SITL Simulator
+Repository for PX4-ROS-Gazebo SITL Simulator \
 This repository is created for personal research and for testing control algorithms. \
+For low-levle PX4 offboard control algorithm with safety filter, please refer to another repository: https://github.com/mhcho1994/px4_ros_autopilot. 
 For original repository with recent versions of PX4, GZ, Gazebo-Ignition, \
 please refer to the following link: https://github.com/kpant14/px4-gz-docker. \
 
