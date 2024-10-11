@@ -10,7 +10,7 @@ bash /tmp/ubuntu.sh --no-sim-tools && rm /tmp/ubuntu.sh
 cd /home/user
 git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
 cd Micro-XRCE-DDS-Agent
-git checkout v2.4.1
+git checkout v2.4.0
 mkdir build
 cd build
 cmake ..

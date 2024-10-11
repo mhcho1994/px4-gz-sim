@@ -26,6 +26,5 @@ chown user:user -R /home/user
 if [[ $# -gt 0 ]]; then
     exec sudo -u user -H -- "$@"
 else
-    echo 'here'
     exec sudo -u user -H -- bash
 fi

@@ -3,9 +3,7 @@
 # show commands before execution and exit when errors occur
 set -e -x
 
-# set the ros2 version to be installed
-ROS_VERSION="foxy"
-
+# install some extra dependencies and gazebo
 sudo apt-get -y update
 sudo apt-get -y upgrade
 sudo  apt-get install --no-install-recommends -y \
@@ -25,7 +23,11 @@ sudo  apt-get install --no-install-recommends -y \
 	screen \
 	terminator \
 	vim \
-    ros-${ROS_VERSION}-plotjuggler-ros \
-    libqt5*-dev
+    libqt5*-dev \
+	libasio-dev
 
-sudo pip install pykwalify NavPy
+# install necessary python libraries
+sudo pip install \
+	pykwalify # \ 
+#	NavPy \
+#	cvxpy
