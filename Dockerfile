@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 LABEL maintainer="Minhyun Cho <cho515@purdue.edu>"
 
 # environment variables to set pacakge manager

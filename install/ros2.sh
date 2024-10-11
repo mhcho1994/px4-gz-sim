@@ -4,7 +4,7 @@
 set -e -x
 
 # set the ros2 version to be installed
-ROS_VERSION="foxy"
+ROS_VERSION="humble"
 
 # enable Ubuntu universe repository
 sudo apt-get -y --no-install-recommends install software-properties-common

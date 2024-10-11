@@ -4,12 +4,12 @@
 set -e -x
 
 # set the ros2 version to be installed
-ROS_VERSION="foxy"
+ROS_VERSION="humble"
 
 # add the alias commands to .bashrc 
 echo "Add alias commands to ~/.bashrc"
-cat << EOF >> ~/.bashrc
-echo sourcing ~/.bashrc
+cat << EOF >> $HOME/.bashrc
+echo sourcing $HOME/.bashrc
 source /opt/ros/${ROS_VERSION}/setup.bash
 export CCACHE_TEMPDIR=/tmp/ccache
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
