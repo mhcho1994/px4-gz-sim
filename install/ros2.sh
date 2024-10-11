@@ -30,4 +30,9 @@ sudo apt-get -y --no-install-recommends install \
 	python3-rosdep \
     python3-rospkg \
 	python3-colcon-common-extensions \
-	libgflags-dev
+	libgflags-dev \
+	ros-humble-mavros \
+	ros-humble-mavros-extras
+
+sudo wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh
+sudo bash install_geographiclib_datasets.sh && sudo rm install_geographiclib_datasets.sh

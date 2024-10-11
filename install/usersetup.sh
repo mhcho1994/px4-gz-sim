@@ -8,8 +8,8 @@ ROS_VERSION="humble"
 
 # add the alias commands to .bashrc 
 echo "Add alias commands to ~/.bashrc"
-cat << EOF >> $HOME/.bashrc
-echo sourcing $HOME/.bashrc
+cat << EOF >> /home/${USER}/.bashrc
+echo sourcing /home/${USER}/.bashrc
 source /opt/ros/${ROS_VERSION}/setup.bash
 export CCACHE_TEMPDIR=/tmp/ccache
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp

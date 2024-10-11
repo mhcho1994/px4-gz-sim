@@ -31,27 +31,27 @@ sudo usermod -a -G sudo,plugdev,dialout,input,render,video $USER
 # base
 sudo chown $USER:$USER ./install/base.sh
 sudo chmod +x ./install/base.sh
-sudo bash ./install/base.sh
+bash ./install/base.sh
 
 # ROS2 (Humble)
 sudo chown $USER:$USER ./install/ros2.sh
 sudo chmod +x ./install/ros2.sh
-sudo bash ./install/ros2.sh
+bash ./install/ros2.sh
 
 # Gazebo (Garden from source)
 sudo chown $USER:$USER ./install/gazebo.sh
 sudo chmod +x ./install/gazebo.sh
-sudo bash ./install/gazebo.sh
+bash ./install/gazebo.sh
 
 # PX4 (PX4 dependencies)
 sudo chown $USER:$USER ./install/px4setup.sh
 sudo chmod +x ./install/px4setup.sh
-sudo bash ./install/px4setup.sh
+bash ./install/px4setup.sh
 
 # extra packages
 sudo chown $USER:$USER ./install/extra.sh
 sudo chmod +x ./install/extra.sh
-sudo bash ./install/extra.sh
+bash ./install/extra.sh
 
 # clear docker by removing unnecessary packages and emptying temporary folder
 sudo bash ./install/clean.sh
@@ -60,13 +60,3 @@ sudo bash ./install/clean.sh
 COPY --chown=user:user /install/usersetup.sh /tmp/install/usersetup.sh
 RUN chmod +x /tmp/install/usersetup.sh
 RUN bash /tmp/install/usersetup.sh
-
-# setup entry point
-COPY /install/entrypoint.sh /tmp/install/entrypoint.sh
-RUN sudo chmod +x /tmp/install/entrypoint.sh
-RUN sudo chsh -s /bin/bash user
-
-# create workspace
-RUN mkdir -p /home/user/work/px4
-RUN mkdir -p /home/user/work/ros2_ws
-WORKDIR /home/user/work

@@ -27,7 +27,7 @@ sudo  apt-get install --no-install-recommends -y \
 	libasio-dev
 
 # install necessary python libraries
-sudo pip install \
-	pykwalify # \ 
+pip install \
+	pykwalify #\ 
 #	NavPy \
 #	cvxpy
