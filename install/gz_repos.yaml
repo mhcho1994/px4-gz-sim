@@ -66,7 +66,7 @@ repositories:
     version: sdf13
   ros_gz:
     type: git
-    url: https://github.com/UoA-CARES/ros_gz
+    url: https://github.com/kpant14/ros_gz
     version: ros2  
   mavros:
     type: git

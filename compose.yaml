@@ -3,10 +3,10 @@ version: "3.9"
 
 services:
   # SITL (PX4/ROS2/Gazebo) simulator
-  px4_gz_multidrone:
-    container_name: drones
-    hostname: drones
-    image: px4_gz_multidrone:latest
+  px4_gz_sim:
+    container_name: px4_gz_sim
+    hostname: px4_gz_sim
+    image: px4_gz_sim:latest
     build:
       context: .
       dockerfile: Dockerfile
