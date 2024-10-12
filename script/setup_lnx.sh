@@ -54,9 +54,8 @@ sudo chmod +x ./install/extra.sh
 bash ./install/extra.sh
 
 # clear docker by removing unnecessary packages and emptying temporary folder
-sudo bash ./install/clean.sh
+bash ./install/clean.sh
 
 # run user setup script
-COPY --chown=user:user /install/usersetup.sh /tmp/install/usersetup.sh
-RUN chmod +x /tmp/install/usersetup.sh
-RUN bash /tmp/install/usersetup.sh
+sudo chown $USER:$USER ./install/usersetup.sh
+bash ./install/usersetup.sh

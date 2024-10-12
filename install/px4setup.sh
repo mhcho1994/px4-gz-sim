@@ -3,9 +3,9 @@
 # show commands before execution and exit when errors occur
 set -e -x
 
-# wget https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.15.0/Tools/setup/ubuntu.sh -P /tmp/
-# wget https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.15.0/Tools/setup/requirements.txt -P /tmp/
-# bash /tmp/ubuntu.sh --no-sim-tools && rm /tmp/ubuntu.sh
+wget https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.15.0/Tools/setup/ubuntu.sh -P /tmp/
+wget https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.15.0/Tools/setup/requirements.txt -P /tmp/
+bash /tmp/ubuntu.sh --no-sim-tools && rm /tmp/ubuntu.sh
 
 cd /home/${USER}
 git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git

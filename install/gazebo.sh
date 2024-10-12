@@ -3,6 +3,18 @@
 # show commands before execution and exit when errors occur
 set -e -x
 
+help(){
+	echo "Usage : $0 -c <count number> -v "
+}
+
+while getopts ":u:p:" opt; do
+  case ${opt} in
+    u ) username=$OPTARG;;
+    p ) password=$OPTARG;;
+    \? ) echo "Usage: cmd [-u] [-p]";;
+  esac
+done
+
 # build from binaries
 # GAZEBO_VERSION="garden"
 
@@ -14,7 +26,7 @@ set -e -x
 # 	gz-${GAZEBO_VERSION}
 # sudo apt install -y libignition-gazebo6-dev
 
-# build from sources: install all necessary dependencies to build gazebo from source
+# build from sources: install all necessary dependencies to build gazebo from source (inactive)
 sudo apt install libeigen3-dev
 sudo wget https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
