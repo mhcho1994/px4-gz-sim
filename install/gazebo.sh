@@ -15,7 +15,7 @@ function usage() {
 
 mode=$1
 
-if [[ " ${modes[@]} " =~ " $mode " ]]
+if [[ " ${modes[@]}" =~ " $mode" ]]
 then
   echo ""
   echo "Valid command."

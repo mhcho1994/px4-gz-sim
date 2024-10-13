@@ -18,7 +18,7 @@ if [ ! -d ./work/ros2_ws/src ] ; then
     cd px4_msgs
     git checkout release/1.15
     cd ..
-
+    # to be updated
     wget https://raw.githubusercontent.com/mhcho1994/px4-gz-multidrone/refs/heads/humble/install/gz_repos.yaml -O gz_repos.yaml
     vcs import < gz_repos.yaml
     cd ../../..
