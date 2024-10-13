@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# show commands before execution and exit when errors occur
+# exit when errors occur and show commands before execution
 set -e -x
 
 # install base packages to run bash scripts
@@ -41,7 +41,7 @@ bash ./install/ros2.sh
 # Gazebo (Garden from source)
 sudo chown $USER:$USER ./install/gazebo.sh
 sudo chmod +x ./install/gazebo.sh
-bash ./install/gazebo.sh
+bash ./install/gazebo.sh source
 
 # PX4 (PX4 dependencies)
 sudo chown $USER:$USER ./install/px4setup.sh

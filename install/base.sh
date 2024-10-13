@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # show commands before execution and exit when errors occur
-set -e -x
+set -e # -x
 
 # update/upgrade packages and install required packages
 sudo apt-get -y update

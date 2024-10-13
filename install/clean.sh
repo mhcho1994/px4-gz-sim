@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # show commands before execution and exit when errors occur
-set -e -x
+set -e # -x
 
 # remove unnecessary packages
 sudo apt-get clean -y

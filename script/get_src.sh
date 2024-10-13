@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# show commands before execution 
+# exit when errors occur
 set -e
 
 if [ ! -d ./work/px4 ] ; then
@@ -18,6 +18,7 @@ if [ ! -d ./work/ros2_ws/src ] ; then
     cd px4_msgs
     git checkout release/1.15
     cd ..
+
     wget https://raw.githubusercontent.com/mhcho1994/px4-gz-multidrone/refs/heads/humble/install/gz_repos.yaml -O gz_repos.yaml
     vcs import < gz_repos.yaml
     cd ../../..

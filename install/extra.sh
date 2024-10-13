@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # show commands before execution and exit when errors occur
-set -e -x
+set -e # -x
 
 # install some extra dependencies and gazebo
 sudo apt-get -y update

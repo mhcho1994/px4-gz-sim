@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# show commands before execution 
+# exit when errors occur
 set -e
+
 # get user/group id to run the container
 if [[ -z "$HOST_UID" ]]; then
     echo "ERROR: please set HOST_UID" >&2
