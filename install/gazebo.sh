@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# show commands before execution and exit when errors occur
+set -x -e 
+
 # define a help function
 help() {
   echo "Usage: source gazebo.sh [options]"
@@ -51,7 +54,7 @@ while true; do
   esac
 done
 
-# build from binaries
+# build from binaries: install ignition-gazebo directly
 function _install_from_binary() {
 
   echo ""
@@ -71,7 +74,7 @@ function _install_from_binary() {
     gz-${GAZEBO_VERSION}
 }
 
-# build from sources: install all necessary dependencies to build gazebo from source
+# build from sources: install all necessary dependencies to build ignition-gazebo from source
 function _install_from_source() {
 
   echo ""
@@ -84,8 +87,8 @@ function _install_from_source() {
 
   sudo apt-get -y update
   sudo apt-get -y upgrade
-  # sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
-  #   python3-vcstool python3-colcon-common-extensions libgz-transport12-dev gz-transport12-cli
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    python3-vcstool python3-colcon-common-extensions
   
   cd /tmp
   wget https://raw.githubusercontent.com/mhcho1994/px4-gz-multidrone/refs/heads/humble/install/gz_repos.yaml -O gz_repos.yaml

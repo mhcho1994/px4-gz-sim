@@ -9,7 +9,7 @@ bash /tmp/ubuntu.sh --no-sim-tools && rm /tmp/ubuntu.sh
 
 cd /home/${USER}
 # here we need to check whether DDS already exists...
-git clone -b v2.4.2 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
+git clone -b v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
 cd Micro-XRCE-DDS-Agent
 mkdir build
 cd build

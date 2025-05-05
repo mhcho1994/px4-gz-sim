@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# exit when errors occur and show commands before execution
-set -e # -x
+# show commands before execution and exit when errors occur
+set -x -e 
 
 # set the ros2 version to be installed
 ROS_VERSION="humble"
@@ -26,13 +26,13 @@ sudo apt-get -y --no-install-recommends install \
     ros-${ROS_VERSION}-ros-ign-gazebo-demos \
     ros-${ROS_VERSION}-ros-ign-image \
     ros-${ROS_VERSION}-mavlink \
+	ros-${ROS_VERSION}-mavros \
+	ros-${ROS_VERSION}-mavros-extras \
 	ros-dev-tools \
 	python3-rosdep \
     python3-rospkg \
 	python3-colcon-common-extensions \
-	libgflags-dev \
-	ros-humble-mavros \
-	ros-humble-mavros-extras
+	libgflags-dev
 
 sudo wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh
 sudo bash install_geographiclib_datasets.sh && sudo rm install_geographiclib_datasets.sh
