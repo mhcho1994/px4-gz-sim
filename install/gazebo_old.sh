@@ -1,67 +1,39 @@
 #!/bin/bash
 
-# define a help function
-help() {
-  echo "Usage: source gazebo.sh [options]"
+# show commands before execution and exit when errors occur
+set -e # -x
+
+# set the installation mode: 1) from binaries, 2) from sources
+declare -a modes
+modes=(binary source)
+
+function usage() {
   echo ""
-  echo "Options:"
-  echo "  -i, --install [MODE]   Install mode: 'binary' or 'source'"
-  echo "  -h, --help             Show this help message"
-  return 0
+  echo "USAGE: gazebo.sh [$(IFS='|'; echo "${modes[*]}")]"
+  echo ""
 }
 
-# parse arguments with getopt
-ARGS=$(getopt -o hi: --long help,install: -- "$@")
-if [[ $? -ne 0 ]]; then
-  help
-  return 1
+mode=$1
+
+if [[ " ${modes[@]}" =~ " $mode" ]]
+then
+  echo ""
+  echo "Valid command."
+else
+  echo ""
+  echo "Invaid command: $mode"
+  usage
+  exit 2
 fi
 
-# make sure the arguments are parsed properly
-eval set -- "$ARGS"
-
-# default install mode
-INSTALL_MODE="binary"
-
-# extract options and arguments
-while true; do
-  case "$1" in
-    -i|--install)
-      INSTALL_MODE="$2"
-      if [[ "$INSTALL_MODE" != "binary" && "$INSTALL_MODE" != "source" ]]; then
-        echo "Error: Invalid install mode: $INSTALL_MODE"
-        help
-        return 1
-      fi
-      shift 2
-      ;;
-    -h|--help)
-      help
-      return 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    *)
-      echo "Unknown option: $1"
-      help
-      return 1
-      ;;
-  esac
-done
-
 # build from binaries
-function _install_from_binary() {
+function _function_binary() {
 
   echo ""
   echo "binary -> Gazebo installation from the binaries"
   echo ""
 
-  GAZEBO_VERSION="harmonic"
-
-  sudo apt-get -y update
-  sudo apt-get -y install curl lsb-release gnupg
+  GAZEBO_VERSION="garden"
 
   sudo wget https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
@@ -69,10 +41,11 @@ function _install_from_binary() {
   sudo apt-get -y upgrade
   sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
     gz-${GAZEBO_VERSION}
+  sudo apt install -y libignition-gazebo6-dev
 }
 
 # build from sources: install all necessary dependencies to build gazebo from source
-function _install_from_source() {
+function _function_source() {
 
   echo ""
   echo "source -> Gazebo installation from the sources"
@@ -95,11 +68,11 @@ function _install_from_source() {
     $(sort -u $(find . -iname 'packages-'`lsb_release -cs`'.apt' -o -iname 'packages.apt' | grep -v '/\.git/') | sed '/gz\|sdf/d' | tr '\n' ' ')
 }
 
-# perform installation logic
-if [[ "$INSTALL_MODE" == "source" ]]; then
-  echo "Installing Gazebo from source..."
-  _install_from_source
-else
-  echo "Installing Gazebo from binary..."
-  _install_from_binary
-fi
+case $mode in
+binary)
+  _function_binary
+  ;;
+source)
+  _function_source
+  ;;
+esac
