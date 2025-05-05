@@ -23,9 +23,9 @@ export PYTHONWARNINGS=ignore:::setuptools.installer,ignore:::setuptools.command.
 
 # detect if running inside docker
 if grep -qE '/docker/|/lxc/' /proc/1/cgroup 2>/dev/null; then
-    WORK_PATH=/home/${USER}/work
+    WORK_PATH="/home/${USER}/work"
 else
-    WORK_PATH=/home/${USER}/ws/px4_gz_sim/work
+    WORK_PATH="/home/${USER}/ws/px4_gz_sim/work"
 fi
 
 # source the setup file if it exists
