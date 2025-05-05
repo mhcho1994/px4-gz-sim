@@ -6,7 +6,6 @@ set -e
 if [ ! -d ./work/px4 ] ; then
     cd ./work
     git clone -b v1.15.4 https://github.com/PX4/PX4-Autopilot.git px4
-    cd px4
     cd ..
 fi
 
@@ -18,6 +17,7 @@ if [ ! -d ./work/ros2_ws/src ] ; then
     # to be updated
     wget https://raw.githubusercontent.com/mhcho1994/px4-gz-multidrone/refs/heads/humble/install/gz_repos.yaml -O gz_repos.yaml
     vcs import < gz_repos.yaml
+    # gzrepos delete
     cd ../../..
 fi
 

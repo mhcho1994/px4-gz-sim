@@ -1,8 +1,8 @@
 # px4-gz-multidrone
-Repository for PX4(v1.15.0)-ROS(Humble)-Gazebo(Garden) SiTL simulator \
+Repository for PX4(v1.15.4)-ROS(Humble)-Gazebo(Harmonic) SiTL simulator \
 This repository is created for personal research and for testing control algorithms. \
 For low-level PX4 offboard control algorithm with safety filter, please refer to another repositories: https://github.com/mhcho1994/px4_ros_autopilot and https://github.com/Balt-AA/balt_go_pd. 
-For original repository with recent versions of PX4, GZ, Gazebo-Ignition, \
+This is an updated version of the original repository with mixed-reality, \
 please refer to the following links: https://github.com/kpant14/px4-gz-docker and https://github.com/CogniPilot/mixed_sense. \
 
 ### Installation and Launch
