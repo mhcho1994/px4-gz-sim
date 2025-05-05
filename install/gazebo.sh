@@ -84,10 +84,10 @@ function _install_from_source() {
 
   sudo apt-get -y update
   sudo apt-get -y upgrade
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
-    python3-vcstool python3-colcon-common-extensions libgz-transport12-dev gz-transport12-cli
+  # sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+  #   python3-vcstool python3-colcon-common-extensions libgz-transport12-dev gz-transport12-cli
+  
   cd /tmp
-
   wget https://raw.githubusercontent.com/mhcho1994/px4-gz-multidrone/refs/heads/humble/install/gz_repos.yaml -O gz_repos.yaml
   vcs import < gz_repos.yaml
 

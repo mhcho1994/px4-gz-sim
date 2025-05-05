@@ -41,7 +41,7 @@ bash ./install/ros2.sh
 # Gazebo (Garden from source)
 sudo chown $USER:$USER ./install/gazebo.sh
 sudo chmod +x ./install/gazebo.sh
-bash ./install/gazebo.sh source
+bash ./install/gazebo.sh --install source
 
 # PX4 (PX4 dependencies)
 sudo chown $USER:$USER ./install/px4setup.sh
