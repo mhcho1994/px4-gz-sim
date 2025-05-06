@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# exit when errors occur
-# set -e 
-
 # define a help function
 help() {
   echo "Usage: source gazebo.sh [options]"

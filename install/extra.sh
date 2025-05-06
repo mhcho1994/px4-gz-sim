@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# exit when errors occur
-# set -e
-
 # install some extra dependencies and necessary programs
 sudo apt-get -y update
 sudo apt-get -y upgrade

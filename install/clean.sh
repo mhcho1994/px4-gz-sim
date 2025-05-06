@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# exit when errors occur
-# set -e
-
 # remove unnecessary packages
 sudo apt-get clean -y
 sudo apt-get autoremove --purge -y
