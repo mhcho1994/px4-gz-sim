@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# show commands before execution and exit when errors occur
-set -x -e 
+# exit when errors occur
+# set -e 
 
 # define a help function
 help() {

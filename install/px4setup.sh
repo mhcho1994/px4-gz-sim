@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# exit when errors occur and show commands before execution
-set -e -x
+# exit when errors occur
+# set -e
 
 wget https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.15.4/Tools/setup/ubuntu.sh -P /tmp/
 wget https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.15.4/Tools/setup/requirements.txt -P /tmp/

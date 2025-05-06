@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# show commands before execution and exit when errors occur
-set -x -e
+# exit when errors occur
+# set -e
 
 # install some extra dependencies and necessary programs
 sudo apt-get -y update

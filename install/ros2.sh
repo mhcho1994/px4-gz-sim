@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# show commands before execution and exit when errors occur
-set -x -e 
+# exit when errors occur
+# set -e 
 
 # set the ros2 version to be installed
 ROS_VERSION="humble"
