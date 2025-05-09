@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# exit when errors occur
+set -e
+
 # set the ros2 version to be installed
 ROS_VERSION="humble"
 
@@ -18,30 +21,6 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 # suppresses noisy or non-critical Python warnings from setuptools
 export PYTHONWARNINGS=ignore:::setuptools.installer,ignore:::setuptools.command.install
 
-# detect if running inside docker
-if grep -qE '/docker/|/lxc/' /proc/1/cgroup 2>/dev/null; then
-    WORK_PATH=/home/${USER}/work
-else
-    WORK_PATH=$(pwd)/work
-fi
-
-# source the setup file if it exists
-SETUP_GZ=\${WORK_PATH}/gazebo/install/setup.sh
-if [ -f \${SETUP_GZ} ]; then
-    source \${SETUP_GZ}
-    echo gazebo built, sourcing from \${SETUP_GZ}
-else
-    echo setup.sh not found at \${SETUP_GZ}
-fi
-
-SETUP_ROS=\${WORK_PATH}/ros2_ws/install/setup.sh
-if [ -f \${SETUP_ROS} ]; then
-    source \${SETUP_ROS}
-    echo ros2 workspace built, sourcing from \${SETUP_ROS}
-else
-    echo setup.sh not found at \${SETUP_ROS}
-fi
-
 # enable the colcon_cd function to quickly cd into ros2 packages
 source /usr/share/colcon_cd/function/colcon_cd.sh
 
@@ -52,3 +31,27 @@ EOF
 # initialize rosdep
 sudo rosdep init
 rosdep update
+
+# # detect if running inside docker
+# if grep -qE '/docker/|/lxc/' /proc/1/cgroup 2>/dev/null; then
+#     WORK_PATH=/home/${USER}/work
+# else
+#     WORK_PATH=$(pwd)/work
+# fi
+
+# # source the setup file if it exists
+# SETUP_GZ=\${WORK_PATH}/gazebo/install/setup.sh
+# if [ -f \${SETUP_GZ} ]; then
+#     source \${SETUP_GZ}
+#     echo gazebo built, sourcing from \${SETUP_GZ}
+# else
+#     echo setup.sh not found at \${SETUP_GZ}
+# fi
+
+# SETUP_ROS=\${WORK_PATH}/ros2_ws/install/setup.sh
+# if [ -f \${SETUP_ROS} ]; then
+#     source \${SETUP_ROS}
+#     echo ros2 workspace built, sourcing from \${SETUP_ROS}
+# else
+#     echo setup.sh not found at \${SETUP_ROS}
+# fi

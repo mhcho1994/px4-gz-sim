@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# show commands before execution and exit when errors occur
-set -x -e 
+# exit when errors occur and print each command
+set -e
+set -x
 
 # set the current user name/group/uid/gid as environment variables
 export HOST_UID=$(id -u)

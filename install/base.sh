@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# exit when errors occur and print each command
+set -e
+set -x
+
 # update/upgrade packages and install required packages
 sudo apt-get -y update
 sudo apt-get -y upgrade

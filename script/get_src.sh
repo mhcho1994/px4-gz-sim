@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # exit when errors occur
-# set -e 
+set -e
 
 # check whether px4 directory exists and clone sources if it is empty
 if [ ! -d ./work/px4 ] || [ -z "$(ls -A ./work/px4)" ]; then

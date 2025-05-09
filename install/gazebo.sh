@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# exit when errors occur and print each command
+set -e
+set -x
+
 # define a help function
 help() {
   echo "Usage: source gazebo.sh [options]"
@@ -58,7 +62,7 @@ function _install_from_binary() {
   echo "binary -> Gazebo installation from the binaries"
   echo ""
 
-  GAZEBO_VERSION="harmonic"
+  GAZEBO_VERSION="garden"
 
   sudo apt-get -y update
   sudo apt-get -y install curl lsb-release gnupg

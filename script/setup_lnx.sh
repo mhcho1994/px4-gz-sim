@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# show commands before execution and exit when errors occur
-set -x -e 
+# exit when errors occur and print each command
+set -e
+set -x
 
 # install base packages to run bash scripts
 sudo apt-get -y update && \
@@ -59,3 +60,7 @@ bash ./install/clean.sh
 # run user setup script
 sudo chown $USER:$USER ./install/usersetup.sh
 bash ./install/usersetup.sh
+
+# 
+set +e
+set +x

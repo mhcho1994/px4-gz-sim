@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# exit when errors occur
-# set -e 
+# exit when errors occur and print each command
+set -e
+set -x
 
 # set the ros2 version to be installed
 ROS_VERSION="humble"
@@ -22,6 +23,7 @@ sudo apt-get -y --no-install-recommends install \
 	ros-${ROS_VERSION}-cyclonedds \
 	ros-${ROS_VERSION}-rmw-cyclonedds-cpp \
 	ros-${ROS_VERSION}-gps-msgs \
+	ros-${ROS_VERSION}-actuator-msgs \
     ros-${ROS_VERSION}-ros-ign-bridge \
     ros-${ROS_VERSION}-ros-ign-gazebo-demos \
     ros-${ROS_VERSION}-ros-ign-image \
@@ -33,6 +35,3 @@ sudo apt-get -y --no-install-recommends install \
     python3-rospkg \
 	python3-colcon-common-extensions \
 	libgflags-dev
-
-sudo wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh
-sudo bash install_geographiclib_datasets.sh && sudo rm install_geographiclib_datasets.sh
