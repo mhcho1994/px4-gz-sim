@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# exit when errors occur and print each command
-set -e
-set -x
+# Exit immediately if a command fails (exits with a non-zero status)
+# and print each command before executing (debug-friendly in Docker builds)
+set -e -x
 
 # install some extra dependencies and necessary programs
 sudo apt-get -y update

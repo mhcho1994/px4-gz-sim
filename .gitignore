@@ -1,0 +1,7 @@
+/ap
+/ros
+/gz
+!.gitignore
+!/ws/px4_multirun.py
+!/ws/px4_x500_square.py
+!/ws/ardu_x500_square.py

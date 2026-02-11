@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# exit when errors occur and print each command
-set -e
-set -x
+# Exit immediately if a command fails (exits with a non-zero status)
+# and print each command before executing (debug-friendly in Docker builds)
+set -e -x
 
 # install base packages to run bash scripts
 sudo apt-get -y update && \
@@ -32,35 +32,39 @@ sudo usermod -a -G sudo,plugdev,dialout,input,render,video $USER
 # base
 sudo chown $USER:$USER ./install/base.sh
 sudo chmod +x ./install/base.sh
-bash ./install/base.sh
+bash ./install/base.sh --debug
 
 # ros2 (humble)
 sudo chown $USER:$USER ./install/ros2.sh
 sudo chmod +x ./install/ros2.sh
-bash ./install/ros2.sh
+bash ./install/ros2.sh --debug
 
-# ignition-gazebo (harmonic from source)
+# ignition-gazebo (harmonic from binary or source)
 sudo chown $USER:$USER ./install/gazebo.sh
 sudo chmod +x ./install/gazebo.sh
-bash ./install/gazebo.sh --install source
+bash ./install/gazebo.sh --debug
 
 # px4 (dependencies)
 sudo chown $USER:$USER ./install/px4setup.sh
 sudo chmod +x ./install/px4setup.sh
-bash ./install/px4setup.sh
+bash ./install/px4setup.sh --debug
 
-# extra packages
-sudo chown $USER:$USER ./install/extra.sh
-sudo chmod +x ./install/extra.sh
-bash ./install/extra.sh
+# # extra packages
+# sudo chown $USER:$USER ./install/extra.sh
+# sudo chmod +x ./install/extra.sh
+# bash ./install/extra.sh
 
-# clear docker by removing unnecessary packages and emptying temporary folder
-bash ./install/clean.sh
+# # clear docker by removing unnecessary packages and emptying temporary folder
+# bash ./install/clean.sh
 
-# run user setup script
-sudo chown $USER:$USER ./install/usersetup.sh
-bash ./install/usersetup.sh
+# # run user setup script
+# sudo chown $USER:$USER ./install/usersetup.sh
+# bash ./install/usersetup.sh
 
-# 
-set +e
-set +x
+# get source
+sudo chown %USER:$USER ./script/get_src.sh
+bash ./script/get_src.sh
+
+# # 
+# set +e
+# set +x

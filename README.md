@@ -51,3 +51,15 @@ Run command below to launch a single drone simulation.
 ./Tools/simulation/gazebo-classic/sitl_multiple_run.sh -n 1 -m iris
 ```
 
+
+  /home/user/ws/flightstack_sim/
+  ap/
+    px4/                  # PX4-Autopilot git repo
+    ardupilot/            # ArduPilot git repo
+  gz/
+    harmonic_ws/          # colcon ws: src/ build/ install/ log/
+  ros/
+    sim_ws/               # colcon ws for your ROS pkgs + px4_msgs
+    ros_gz_ws/            # optional colcon ws for ros_gz from source
+  scripts/
+  docker/

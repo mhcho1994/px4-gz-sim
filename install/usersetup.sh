@@ -1,57 +1,171 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# usersetup.sh — configure user shell for ROS 2 + Gazebo + flightstack_sim workspaces
+#
+# Goals:
+#  - Clean --help output
+#  - Optional --debug enables `set -x`
+#  - Prevent sourcing (this script should be executed)
+#  - Idempotent: re-running does NOT duplicate ~/.bashrc blocks
+#  - Safe rosdep init/update (init may already be done)
+#  - Provide convenient overlay sourcing for the recommended project layout
+#
+# Recommended project layout (default):
+#   /home/$USER/ws/flightstack_sim/
+#     gz/harmonic_ws/install/setup.bash         (optional, source-built Gazebo)
+#     ros/ros_gz_ws/install/setup.bash          (optional, source-built ros_gz)
+#     ros/px4_msgs_ws/install/setup.bash        (optional, px4_msgs workspace)
+#     ros/sim_ws/install/setup.bash             (optional, your ROS workspace)
+#     ap/px4/
+#     ap/ardupilot/
 
-# exit when errors occur
-set -e
-
-# set the ros2 version to be installed
+# --------------------------
+# Defaults
+# --------------------------
+DEBUG="false"
 ROS_VERSION="humble"
+PROJECT_ROOT="/home/${USER}/ws/flightstack_sim"
 
-# add the alias commands to .bashrc 
-echo "Add alias commands to ~/.bashrc"
-cat << EOF >> /home/${USER}/.bashrc
-# source ros2
-source /opt/ros/${ROS_VERSION}/setup.bash
+help() {
+  cat <<EOF
+Usage:
+  bash usersetup.sh [options]
 
-# speed up C/C++ compilation by caching temporary build files in /tmp
-export CCACHE_TEMPDIR=/tmp/ccache
+Options:
+  -h, --help             Show this help and exit (no command tracing)
+  --debug                Enable command tracing (set -x)
+  --ros-distro DISTRO    ROS 2 distro to source (default: ${ROS_VERSION})
+  --project-root PATH    Project root (default: ${PROJECT_ROOT})
 
-# select Cyclone DDS as the middleware for ROS 2 communication.
+Examples:
+  bash usersetup.sh
+  bash usersetup.sh --debug
+  bash usersetup.sh --project-root /home/user/ws/flightstack_sim
+EOF
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+# Prevent sourcing
+(return 0 2>/dev/null) && { echo "Do not source this script. Run: bash $0" >&2; return 1; }
+
+# --------------------------
+# Parse args (before set -x)
+# --------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) help; exit 0 ;;
+    --debug) DEBUG="true"; shift ;;
+    --ros-distro)
+      [[ $# -ge 2 ]] || die "--ros-distro requires an argument (e.g., humble)"
+      ROS_VERSION="$2"
+      shift 2
+      ;;
+    --project-root)
+      [[ $# -ge 2 ]] || die "--project-root requires a path"
+      PROJECT_ROOT="$2"
+      shift 2
+      ;;
+    *) die "Unknown option: $1 (use --help)" ;;
+  esac
+done
+
+# --------------------------
+# Strict mode
+# --------------------------
+set -Ee
+trap 'echo "[usersetup.sh] ERROR line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
+[[ "${DEBUG}" == "true" ]] && set -x
+
+BASHRC="/home/${USER}/.bashrc"
+MARK_BEGIN="# >>> flightstack_sim usersetup >>>"
+MARK_END="# <<< flightstack_sim usersetup <<<"
+
+# --------------------------
+# Ensure ~/.bashrc exists
+# --------------------------
+touch "${BASHRC}"
+
+# --------------------------
+# Replace managed block in ~/.bashrc (idempotent)
+# --------------------------
+tmpfile="$(mktemp)"
+
+awk -v begin="${MARK_BEGIN}" -v end="${MARK_END}" '
+  $0==begin {inblock=1; next}
+  $0==end {inblock=0; next}
+  !inblock {print}
+' "${BASHRC}" > "${tmpfile}"
+
+cat <<EOF >> "${tmpfile}"
+${MARK_BEGIN}
+# --------------------------
+# ROS 2 base environment
+# --------------------------
+if [ -f "/opt/ros/${ROS_VERSION}/setup.bash" ]; then
+  source "/opt/ros/${ROS_VERSION}/setup.bash"
+fi
+
+# Prefer Cyclone DDS for ROS 2 middleware (deterministic + commonly stable in containers)
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
-# suppresses noisy or non-critical Python warnings from setuptools
+# Speed up repeated C/C++ builds (if ccache installed)
+export CCACHE_TEMPDIR=/tmp/ccache
+
+# Reduce setuptools noise in container environments
 export PYTHONWARNINGS=ignore:::setuptools.installer,ignore:::setuptools.command.install
 
-# enable the colcon_cd function to quickly cd into ros2 packages
-source /usr/share/colcon_cd/function/colcon_cd.sh
+# Colcon helpers (guarded)
+[ -f "/usr/share/colcon_cd/function/colcon_cd.sh" ] && source "/usr/share/colcon_cd/function/colcon_cd.sh"
+[ -f "/usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash" ] && source "/usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash"
 
-# enable shell tab-completion for colcon commands and options
-source /usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash
+# --------------------------
+# flightstack_sim paths
+# --------------------------
+export FLIGHTSTACK_SIM_ROOT="${PROJECT_ROOT}"
+# export FLIGHTSTACK_SIM_AP="\${FLIGHTSTACK_SIM_ROOT}/ap"
+# export FLIGHTSTACK_SIM_GZ="\${FLIGHTSTACK_SIM_ROOT}/gz"
+# export FLIGHTSTACK_SIM_ROS="\${FLIGHTSTACK_SIM_ROOT}/ros"
+
+# --------------------------
+# Overlay order (optional, source only if exists)
+#   1) Gazebo (source-built) overlay
+#   2) ros_gz overlay (if you build ros_gz from source)
+#   3) px4_msgs_ws overlay (if you build px4_msgs in its own ws)
+#   4) your sim workspace overlay
+# --------------------------
+[ -f "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash"
+
+# --------------------------
+# Convenience aliases (optional)
+# --------------------------
+# alias fsroot='cd "\${FLIGHTSTACK_SIM_ROOT}"'
+# alias fsap='cd "\${FLIGHTSTACK_SIM_AP}"'
+# alias fsgz='cd "\${FLIGHTSTACK_SIM_GZ}"'
+# alias fsros='cd "\${FLIGHTSTACK_SIM_ROS}"'
+# alias px4dir='cd "\${FLIGHTSTACK_SIM_AP}/px4"'
+# alias apdir='cd "\${FLIGHTSTACK_SIM_AP}/ardupilot"'
+# alias px4msgsw='cd "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws"'
+# alias simws='cd "\${FLIGHTSTACK_SIM_ROS}/sim_ws"'
+${MARK_END}
 EOF
 
-# initialize rosdep
-sudo rosdep init
-rosdep update
+mv "${tmpfile}" "${BASHRC}"
+echo "Updated ${BASHRC} (managed block inserted/updated)."
 
-# # detect if running inside docker
-# if grep -qE '/docker/|/lxc/' /proc/1/cgroup 2>/dev/null; then
-#     WORK_PATH=/home/${USER}/work
-# else
-#     WORK_PATH=$(pwd)/work
-# fi
+# --------------------------
+# rosdep init/update (safe)
+# --------------------------
+if command -v rosdep >/dev/null 2>&1; then
+  sudo rosdep init 2>/dev/null || true
+  rosdep update
+else
+  echo "WARNING: rosdep not found. Install python3-rosdep first."
+fi
 
-# # source the setup file if it exists
-# SETUP_GZ=\${WORK_PATH}/gazebo/install/setup.sh
-# if [ -f \${SETUP_GZ} ]; then
-#     source \${SETUP_GZ}
-#     echo gazebo built, sourcing from \${SETUP_GZ}
-# else
-#     echo setup.sh not found at \${SETUP_GZ}
-# fi
-
-# SETUP_ROS=\${WORK_PATH}/ros2_ws/install/setup.sh
-# if [ -f \${SETUP_ROS} ]; then
-#     source \${SETUP_ROS}
-#     echo ros2 workspace built, sourcing from \${SETUP_ROS}
-# else
-#     echo setup.sh not found at \${SETUP_ROS}
-# fi
+echo "User environment setup complete."
