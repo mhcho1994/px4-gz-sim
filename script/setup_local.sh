@@ -41,9 +41,9 @@ sudo chmod +x ./install/gazebo.sh
 bash ./install/gazebo.sh --debug
 
 # px4 (dependencies)
-sudo chown $USER:$USER ./install/px4setup.sh
-sudo chmod +x ./install/px4setup.sh
-bash ./install/px4setup.sh --debug
+sudo chown $USER:$USER ./install/autopilot.sh
+sudo chmod +x ./install/autopilot.sh
+bash ./install/autopilot.sh --debug
 
 # extra packages
 sudo chown $USER:$USER ./install/extra.sh
@@ -58,7 +58,7 @@ sudo chown $USER:$USER ./install/usersetup.sh
 bash ./install/usersetup.sh
 
 # get source
-sudo chown %USER:$USER ./script/get_src.sh
+sudo chown $USER:$USER ./script/get_src.sh
 bash ./script/get_src.sh
 
 # # 
