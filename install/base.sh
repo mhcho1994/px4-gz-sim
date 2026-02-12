@@ -2,8 +2,8 @@
 # base.sh — install fundamental build/dev packages for PX4/ArduPilot/ROS2/Gazebo
 #
 # Features:
-#  - Clean --help output (no tracing)
-#  - Optional --debug enables `set -x`
+#  - help
+#  - debug enables `set -x`
 
 # --------------------------
 # Defaults

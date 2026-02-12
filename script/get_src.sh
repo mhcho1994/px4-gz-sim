@@ -164,28 +164,28 @@ else
   echo "PX4 directory exists and is not empty, skipping: ${PX4_DIR}"
 fi
 
-# --------------------------
-# Clone px4_msgs
-# --------------------------
-if is_dir_empty "${PX4_MSGS_DIR}"; then
-  echo "Cloning px4_msgs (${PX4_MSGS_REF}) into: ${PX4_MSGS_DIR}"
-  git_clone_repo "https://github.com/PX4/px4_msgs.git" "${PX4_MSGS_REF}" "${PX4_MSGS_DIR}"
-else
-  echo "px4_msgs directory exists and is not empty, skipping: ${PX4_MSGS_DIR}"
-fi
+# # --------------------------
+# # Clone px4_msgs
+# # --------------------------
+# if is_dir_empty "${PX4_MSGS_DIR}"; then
+#   echo "Cloning px4_msgs (${PX4_MSGS_REF}) into: ${PX4_MSGS_DIR}"
+#   git_clone_repo "https://github.com/PX4/px4_msgs.git" "${PX4_MSGS_REF}" "${PX4_MSGS_DIR}"
+# else
+#   echo "px4_msgs directory exists and is not empty, skipping: ${PX4_MSGS_DIR}"
+# fi
 
-# --------------------------
-# Clone ArduPilot (default enabled)
-# --------------------------
-if [[ "${WITH_ARDUPILOT}" == "true" ]]; then
-  if is_dir_empty "${ARDUPILOT_DIR}"; then
-    echo "Cloning ArduPilot (${ARDUPILOT_REF}) into: ${ARDUPILOT_DIR}"
-    git_clone_repo "https://github.com/ArduPilot/ardupilot.git" "${ARDUPILOT_REF}" "${ARDUPILOT_DIR}"
-    init_submodules "${ARDUPILOT_DIR}"
-  else
-    echo "ArduPilot directory exists and is not empty, skipping: ${ARDUPILOT_DIR}"
-  fi
-fi
+# # --------------------------
+# # Clone ArduPilot (default enabled)
+# # --------------------------
+# if [[ "${WITH_ARDUPILOT}" == "true" ]]; then
+#   if is_dir_empty "${ARDUPILOT_DIR}"; then
+#     echo "Cloning ArduPilot (${ARDUPILOT_REF}) into: ${ARDUPILOT_DIR}"
+#     git_clone_repo "https://github.com/ArduPilot/ardupilot.git" "${ARDUPILOT_REF}" "${ARDUPILOT_DIR}"
+#     init_submodules "${ARDUPILOT_DIR}"
+#   else
+#     echo "ArduPilot directory exists and is not empty, skipping: ${ARDUPILOT_DIR}"
+#   fi
+# fi
 
 echo ""
 echo "DONE. Sources prepared under: ${PROJECT_ROOT}"

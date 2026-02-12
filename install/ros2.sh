@@ -2,10 +2,10 @@
 # ros2.sh — install ROS 2 Humble on Ubuntu 22.04 (Jammy)
 #
 # Features:
-#  - Clean --help output (no tracing)
-#  - Optional --debug enables `set -x`
+#  - help
+#  - debug enables `set -x`
 #
-# NOTE:
+# Note:
 #   ROS-GZ bridges are installed in the Gazebo installation script because
 #   they must match the specific Gazebo distribution (e.g., Harmonic). ROS 2 Humble
 #   officially targets Gazebo Fortress by default, so we keep Gazebo integration separate.

@@ -108,9 +108,9 @@ RUN sudo chmod +x /tmp/install/entrypoint.sh
 RUN sudo chsh -s /bin/bash user
 
 # create workspace
-RUN mkdir -p /home/user/work/px4
-RUN mkdir -p /home/user/work/ros2_ws
-WORKDIR /home/user/work
+RUN mkdir -p /home/user/ws/px4
+RUN mkdir -p /home/user/ws/ros2_ws
+WORKDIR /home/user/ws
 
 # change user to root and run entrypoint script
 USER root

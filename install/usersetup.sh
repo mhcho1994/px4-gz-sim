@@ -136,10 +136,10 @@ export FLIGHTSTACK_SIM_ROOT="${PROJECT_ROOT}"
 #   3) px4_msgs_ws overlay (if you build px4_msgs in its own ws)
 #   4) your sim workspace overlay
 # --------------------------
-[ -f "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash"
-[ -f "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash"
-[ -f "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash"
-[ -f "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash"
+# [ -f "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash"
+# [ -f "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash"
+# [ -f "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash"
+# [ -f "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash"
 
 # --------------------------
 # Convenience aliases (optional)

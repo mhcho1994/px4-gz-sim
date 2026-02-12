@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Exit immediately if a command fails (exits with a non-zero status)
-# and print each command before executing (debug-friendly in Docker builds)
-set -e -x
-
 # install base packages to run bash scripts
 sudo apt-get -y update && \
 sudo apt-get -y upgrade && \
@@ -49,17 +45,17 @@ sudo chown $USER:$USER ./install/px4setup.sh
 sudo chmod +x ./install/px4setup.sh
 bash ./install/px4setup.sh --debug
 
-# # extra packages
-# sudo chown $USER:$USER ./install/extra.sh
-# sudo chmod +x ./install/extra.sh
-# bash ./install/extra.sh
+# extra packages
+sudo chown $USER:$USER ./install/extra.sh
+sudo chmod +x ./install/extra.sh
+bash ./install/extra.sh
 
 # # clear docker by removing unnecessary packages and emptying temporary folder
 # bash ./install/clean.sh
 
-# # run user setup script
-# sudo chown $USER:$USER ./install/usersetup.sh
-# bash ./install/usersetup.sh
+# run user setup script
+sudo chown $USER:$USER ./install/usersetup.sh
+bash ./install/usersetup.sh
 
 # get source
 sudo chown %USER:$USER ./script/get_src.sh

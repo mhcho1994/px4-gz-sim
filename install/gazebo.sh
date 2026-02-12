@@ -2,30 +2,36 @@
 # gazebo.sh — install/build Gazebo Harmonic on Ubuntu 22.04 (Jammy)
 #
 # Features:
-#  - Clean --help output (no tracing)
-#  - Optional --debug enables `set -x`
-#  - binary/source install modes
-#  - source mode builds Gazebo Harmonic from source (colcon + vcs)
-#  - optional ros_gz build (ROS 2 Humble) against the source-built Gazebo overlay
+#  - help
+#  - debug enables `set -x`
+#  - binary/source install modes for Gazebo (debian or colcon + vcs)
+#  - binary/source ros_gz install, independently selectable
 #
 # Notes:
 #  - We intentionally do NOT run `apt-get upgrade` to preserve reproducibility.
-#  - ROS-GZ bridges for Harmonic can be installed as binaries (ros-humble-ros-gzharmonic),
-#    but if you're source-building Gazebo for custom plugins, building ros_gz from source
+#  - ROS-GZ bridges for Harmonic can be installed as binaries (ros-humble-ros-gzharmonic).
+#    But if you're source-building Gazebo for custom plugins, building ros_gz from source
 #    against that overlay is often the most consistent setup.
 
 # --------------------------
 # Defaults
 # --------------------------
-DEBUG="false"                 # --debug
-INSTALL_MODE="binary"         # --install binary|source
-BUILD_ROS_GZ="true"           # --no-ros-gz disables ros_gz build in source mode
-BUILD_TYPE="RelWithDebInfo"   # --build-type
+DEBUG="false"                     # --debug
+INSTALL_MODE="binary"             # --install binary|source (Gazebo)
+BUILD_TYPE="RelWithDebInfo"       # --build-type
 ROS_DISTRO="humble"
 GZ_VERSION="harmonic"
-PROJECT_ROOT="/home/${USER}/ws/flightstack_sim"
+
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 GZ_WS_DIR="${PROJECT_ROOT}/gz/${GZ_VERSION}_ws"
-ROS_GZ_WS_DIR="${PROJECT_ROOT}/ros/ros_gz_ws"
+
+# ros_gz control:
+#  - ROS_GZ_MODE=auto  => Gazebo=binary -> ros_gz=binary, Gazebo=source -> ros_gz=source
+#  - ROS_GZ_MODE=binary|source => force that mode regardless of Gazebo install
+#  - --no-ros-gz disables ros_gz entirely
+BUILD_ROS_GZ="true"               # --no-ros-gz
+ROS_GZ_MODE="auto"                # --ros-gz auto|binary|source
+ROS_GZ_WS_DIR="${PROJECT_ROOT}/ros2/ros_gz_ws"
 
 # Where to fetch Gazebo repos from in source mode:
 #   - default: official Harmonic collection file from gazebodistro
@@ -38,27 +44,32 @@ Usage:
   bash gazebo.sh [options]
 
 Options:
-  -h, --help               Show this help and exit (no command tracing)
-  --debug                  Enable command tracing (set -x)
+  -h, --help                 Show this help and exit (no command tracing)
+  --debug                    Enable command tracing (set -x)
 
-  -i, --install MODE       Install mode: binary | source (default: ${INSTALL_MODE})
-      --no-ros-gz          (source mode) Build Gazebo only, skip building ros_gz
-      --project-root PATH      Default: ${PROJECT_ROOT}
-      --build-type TYPE    CMake build type (default: ${BUILD_TYPE})
-      --repos-yaml SRC     (source mode) Repos YAML URL/path (default: official Harmonic collection)
+  -i, --install MODE         Gazebo install mode: binary | source (default: ${INSTALL_MODE})
+
+      --ros-gz MODE           ros_gz install mode: auto | binary | source (default: ${ROS_GZ_MODE})
+                              auto => follows --install (binary->binary, source->source)
+      --no-ros-gz             Skip installing ros_gz entirely
+
+      --project-root PATH     Default: ${PROJECT_ROOT}
+      --build-type TYPE       CMake build type (default: ${BUILD_TYPE})
+      --repos-yaml SRC        (source mode) Repos YAML URL/path for Gazebo source
+                              (default: official Harmonic collection)
 
 Examples:
-  # Binary install (Gazebo Harmonic + ROS bridge binaries)
+  # Gazebo binary + ros_gz binary (default auto)
   bash gazebo.sh --install binary
 
-  # Source build Gazebo Harmonic + ros_gz overlay
-  bash gazebo.sh --install source --ws-root /home/user/ws --build-type RelWithDebInfo
+  # Gazebo source + ros_gz source (default auto)
+  bash gazebo.sh --install source
 
-  # Source build Gazebo only (skip ros_gz)
+  # Gazebo source, no ros_gz
   bash gazebo.sh --install source --no-ros-gz
 
-  # Source build using your custom repos file
-  bash gazebo.sh --install source --repos-yaml https://raw.githubusercontent.com/<you>/<repo>/main/gz_repos.yaml
+  # Gazebo binary, but ros_gz from source
+  bash gazebo.sh --install binary --ros-gz source
 EOF
 }
 
@@ -88,14 +99,22 @@ while [[ $# -gt 0 ]]; do
       INSTALL_MODE="$2"
       shift 2
       ;;
+    --ros-gz)
+      [[ $# -ge 2 ]] || die "--ros-gz requires an argument (auto|binary|source)"
+      ROS_GZ_MODE="$2"
+      shift 2
+      ;;
     --no-ros-gz)
       BUILD_ROS_GZ="false"
       shift
       ;;
-    --ws-root)
-      [[ $# -ge 2 ]] || die "--ws-root requires a path"
-      WS_ROOT="$2"
+    --project-root)
+      [[ $# -ge 2 ]] || die "--project-root requires a path"
+      PROJECT_ROOT="$2"
       shift 2
+      # refresh derived paths
+      GZ_WS_DIR="${PROJECT_ROOT}/gz/${GZ_VERSION}_ws"
+      ROS_GZ_WS_DIR="${PROJECT_ROOT}/ros/ros_gz_ws"
       ;;
     --build-type)
       [[ $# -ge 2 ]] || die "--build-type requires a value"
@@ -117,6 +136,12 @@ done
 if [[ "${INSTALL_MODE}" != "binary" && "${INSTALL_MODE}" != "source" ]]; then
   die "Invalid --install mode: ${INSTALL_MODE} (expected: binary|source)"
 fi
+
+# Validate ros_gz mode
+case "${ROS_GZ_MODE}" in
+  auto|binary|source) ;;
+  *) die "Invalid --ros-gz mode: ${ROS_GZ_MODE} (expected: auto|binary|source)" ;;
+esac
 
 # --------------------------
 # Strict mode (after help)
@@ -163,62 +188,44 @@ fetch_repos_yaml() {
 }
 
 # --------------------------
-# Binary install
+# ros_gz helpers (binary/source)
 # --------------------------
-install_binary() {
-  echo ""
-  echo "binary -> Installing Gazebo (${GZ_VERSION}) from binaries"
-  echo "         ROS_DISTRO=${ROS_DISTRO}, BUILD_ROS_GZ=${BUILD_ROS_GZ}"
-  echo ""
-
-  add_osrf_repo
-
-  
-  # 1) Install Gazebo
-  sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
-    "gz-${GZ_VERSION}"
-
-  # 2) Optionally install ROS-GZ bridge binaries (pairing-aware)
+install_ros_gz_binary() {
   if [[ "${BUILD_ROS_GZ}" != "true" ]]; then
     echo "Skipping ROS-GZ bridge install (BUILD_ROS_GZ=false)"
     return 0
   fi
 
+  echo ""
+  echo "==> Installing ros_gz binaries (pairing-aware)"
+  echo "    ROS_DISTRO=${ROS_DISTRO}, GZ_VERSION=${GZ_VERSION}"
+  echo ""
+
   # Pairing logic:
   # - Humble officially pairs with Fortress (recommended).
   # - Humble + Harmonic is possible via non-official OSRF binaries: ros-humble-ros-gzharmonic,
   #   which can conflict with ros-humble-ros-gz* packages.
-  # --------------------------
-  # Strict mode for paring logic
-  # --------------------------
   if [[ "${ROS_DISTRO}:${GZ_VERSION}" == "humble:harmonic" ]]; then
-  # Ensure Fortress-paired packages aren't installed (conflict risk). 
+    # Ensure Fortress-paired packages aren't installed (conflict risk).
     if dpkg -l | grep -q "^ii  ros-${ROS_DISTRO}-ros-gz "; then
       sudo apt-get -y remove "ros-${ROS_DISTRO}-ros-gz"
     fi
   fi
-  
+
   case "${ROS_DISTRO}:${GZ_VERSION}" in
     humble:fortress)
-      # Official / recommended pairing for Humble
       sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
         "ros-${ROS_DISTRO}-ros-gz"
       ;;
-
     jazzy:harmonic)
-      # Official / recommended pairing for Jazzy
       sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
         "ros-${ROS_DISTRO}-ros-gz"
       ;;
-
     humble:harmonic)
-      # Non-official binary packages hosted in packages.osrfoundation.org
-      # NOTE: Conflicts with ros-humble-ros-gz* (Fortress pairing). 
       echo "WARNING: ROS 2 Humble + Gazebo Harmonic is a 'use with caution' pairing."
       sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
         "ros-${ROS_DISTRO}-ros-gzharmonic"
       ;;
-
     *)
       echo "ERROR: No supported binary ROS-GZ bridge pairing for ROS_DISTRO=${ROS_DISTRO} and GZ_VERSION=${GZ_VERSION}." >&2
       echo "       Either switch to a recommended pairing, or use --install source to build ros_gz from source." >&2
@@ -227,17 +234,105 @@ install_binary() {
   esac
 }
 
+install_ros_gz_source() {
+  echo ""
+  echo "==> Building ros_gz (${ROS_DISTRO}) from source"
+  echo "    (works with Gazebo=${INSTALL_MODE}; uses overlay if available)"
+  echo ""
+
+  # Tooling
+  sudo apt-get -y update
+  sudo apt-get -y --no-install-recommends install \
+    git \
+    cmake \
+    ninja-build \
+    pkg-config \
+    build-essential \
+    python3-rosdep \
+    python3-colcon-common-extensions
+
+  # rosdep setup (safe if already initialized)
+  sudo rosdep init 2>/dev/null || true
+  rosdep update
+
+  local ROS_GZ_WS="${ROS_GZ_WS_DIR}"
+  local ROS_GZ_SRC="${ROS_GZ_WS}/src"
+  mkdir -p "${ROS_GZ_SRC}"
+  cd "${ROS_GZ_SRC}"
+
+  if [[ ! -d ros_gz ]]; then
+    git clone -b "${ROS_DISTRO}" https://github.com/gazebosim/ros_gz.git
+  fi
+
+  # Source ROS
+  # shellcheck disable=SC1091
+  source "/opt/ros/${ROS_DISTRO}/setup.bash"
+
+  # If Gazebo overlay exists (source install), source it; otherwise rely on system Gazebo
+  if [[ -f "${GZ_WS_DIR}/install/setup.bash" ]]; then
+    # shellcheck disable=SC1090
+    source "${GZ_WS_DIR}/install/setup.bash"
+    echo "==> Using Gazebo overlay: ${GZ_WS_DIR}/install/setup.bash"
+  else
+    echo "==> No Gazebo overlay found at ${GZ_WS_DIR}/install/setup.bash"
+    echo "    Building ros_gz against system Gazebo (ensure gz + dev packages are installed)."
+    # Best-effort: install common bridge build deps if available.
+    # (Exact Gazebo dev package names vary by distro/GZ version; users may already have them.)
+    sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
+      python3-vcstool || true
+  fi
+
+  cd "${ROS_GZ_WS}"
+  rosdep install -r --from-paths src -i -y --rosdistro "${ROS_DISTRO}" || true
+
+  echo "==> colcon build (ros_gz)"
+  colcon build --merge-install \
+    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+}
+
+install_ros_gz() {
+  if [[ "${BUILD_ROS_GZ}" != "true" ]]; then
+    echo "==> Skipping ros_gz (--no-ros-gz)"
+    return 0
+  fi
+
+  local mode="${ROS_GZ_MODE}"
+  if [[ "${mode}" == "auto" ]]; then
+    mode="${INSTALL_MODE}"
+  fi
+
+  case "${mode}" in
+    binary) install_ros_gz_binary ;;
+    source) install_ros_gz_source ;;
+    *) die "Invalid resolved ros_gz mode: ${mode}" ;;
+  esac
+}
+
 # --------------------------
-# Source build (Gazebo + optional ros_gz)
+# gz helpers (binary/source)
 # --------------------------
-install_source() {
+install_gz_binary() {
+  echo ""
+  echo "binary -> Installing Gazebo (${GZ_VERSION}) from binaries"
+  echo "         ROS_DISTRO=${ROS_DISTRO}, ROS_GZ_MODE=${ROS_GZ_MODE}, BUILD_ROS_GZ=${BUILD_ROS_GZ}"
+  echo ""
+
+  add_osrf_repo
+
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
+    "gz-${GZ_VERSION}"
+
+  # ros_gz is handled separately
+  install_ros_gz
+}
+
+install_gz_source() {
   echo ""
   echo "source -> Building Gazebo (${GZ_VERSION}) from source"
   echo "         repos: ${REPOS_YAML}"
-  echo "         ws-root: ${WS_ROOT}"
+  echo "         project-root: ${PROJECT_ROOT}"
   echo ""
 
-  # Tools required for vcs/colcon builds
   sudo apt-get -y update
   sudo apt-get -y --no-install-recommends install \
     git \
@@ -249,78 +344,36 @@ install_source() {
     python3-vcstool \
     python3-colcon-common-extensions
 
-  # OSRF repo helps satisfy many dependencies via apt
   add_osrf_repo
 
-  # Workspace layout
-  local GZ_WS="${WS_ROOT}/gz_${GZ_VERSION}_ws"
+  local GZ_WS="${GZ_WS_DIR}"
   local GZ_SRC="${GZ_WS}/src"
   mkdir -p "${GZ_SRC}"
 
-  # 1) Import repos
   cd "${GZ_SRC}"
   fetch_repos_yaml "${REPOS_YAML}" "${GZ_SRC}/repos.yaml"
   vcs import < "${GZ_SRC}/repos.yaml"
 
-  # 2) Install apt dependencies declared by the source repos
-  #    This follows the common Gazebo pattern: scan packages*.apt files.
-  #    IMPORTANT: If you rely on apt-provided gz/sdf instead of source versions,
-  #    remove the sed filter below.
   echo "==> Installing Gazebo source dependencies (apt)"
   sudo apt-get -y install \
     $(sort -u $(find . -iname "packages-$(lsb_release -cs).apt" -o -iname "packages.apt" | grep -v '/\.git/') \
       | sed '/gz\|sdf/d' | tr '\n' ' ')
 
-  # 3) Build Gazebo
   cd "${GZ_WS}"
   echo "==> colcon build (Gazebo ${GZ_VERSION})"
   colcon build --merge-install \
     --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
 
-  # 4) Optional: build ros_gz from source against the overlay
-  if [[ "${BUILD_ROS_GZ}" == "true" ]]; then
-    echo ""
-    echo "==> Building ros_gz (${ROS_DISTRO}) from source against Gazebo overlay"
-    echo ""
-
-    # rosdep setup (safe if already initialized)
-    sudo apt-get -y --no-install-recommends install python3-rosdep
-    sudo rosdep init 2>/dev/null || true
-    rosdep update
-
-    local ROS_GZ_WS="${WS_ROOT}/ros_gz_ws"
-    local ROS_GZ_SRC="${ROS_GZ_WS}/src"
-    mkdir -p "${ROS_GZ_SRC}"
-    cd "${ROS_GZ_SRC}"
-
-    # ros_gz repo (Humble branch)
-    if [[ ! -d ros_gz ]]; then
-      git clone -b "${ROS_DISTRO}" https://github.com/gazebosim/ros_gz.git
-    fi
-
-    # Source ROS + Gazebo overlays so dependencies resolve correctly
-    # shellcheck disable=SC1091
-    source "/opt/ros/${ROS_DISTRO}/setup.bash"
-    # shellcheck disable=SC1090
-    source "${GZ_WS}/install/setup.bash"
-
-    cd "${ROS_GZ_WS}"
-    rosdep install -r --from-paths src -i -y --rosdistro "${ROS_DISTRO}" || true
-
-    echo "==> colcon build (ros_gz)"
-    colcon build --merge-install \
-      --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-  else
-    echo "==> Skipping ros_gz build (--no-ros-gz)"
-  fi
+  # ros_gz is handled separately
+  install_ros_gz
 
   echo ""
   echo "DONE."
   echo "To use the source-built Gazebo overlay:"
   echo "  source ${GZ_WS}/install/setup.bash"
   if [[ "${BUILD_ROS_GZ}" == "true" ]]; then
-    echo "To use the ros_gz overlay:"
-    echo "  source ${WS_ROOT}/ros_gz_ws/install/setup.bash"
+    echo "To use the ros_gz overlay (if built from source):"
+    echo "  source ${ROS_GZ_WS_DIR}/install/setup.bash"
   fi
   echo ""
 }
@@ -329,7 +382,7 @@ install_source() {
 # Main
 # --------------------------
 if [[ "${INSTALL_MODE}" == "binary" ]]; then
-  install_binary
+  install_gz_binary
 else
-  install_source
+  install_gz_source
 fi
