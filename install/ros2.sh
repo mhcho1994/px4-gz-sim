@@ -135,5 +135,5 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install "
 # --------------------------
 # Notes / next steps
 # --------------------------
-echo "ROS 2 '${ROS_VERSION}' installed."
+echo "ROS 2 '${ROS_VERSION}' Installation DONE."
 echo "Reminder: ROS-GZ bridges are installed in the Gazebo script to match the Gazebo distro (e.g., Harmonic)."

@@ -175,7 +175,7 @@ fi
 # Strict mode
 # --------------------------
 set -Ee
-trap 'echo "[px4_setup.sh] ERROR line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
+trap 'echo "[autopilot.sh] ERROR line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 if [[ "${DEBUG}" == "true" ]]; then
   set -x
 fi
@@ -342,21 +342,45 @@ install_micro_xrce_agent() {
   esac
 }
 
+
 # --------------------------
-# ArduPilot: basic prep + plugin + models
+# ArduPilot: deps (SITL)
 # --------------------------
-prepare_ardupilot_dir() {
+install_ardupilot_deps() {
   echo ""
-  echo "==> Preparing ArduPilot directory"
-  echo "    ARDUPILOT_DIR=${ARDUPILOT_DIR}"
-  echo "    ARDUPILOT_REF=${ARDUPILOT_REF}"
+  echo "==> Installing ArduPilot dependencies (ARDUPILOT_REF=${ARDUPILOT_REF})"
+  echo "    (using Tools/environment_install/install-prereqs-ubuntu.sh -y)"
   echo ""
+
+  # IMPORTANT: do NOT run as root; the script uses sudo internally.
+  # deps-only: disable environment modifications / completion / git submodule updates
+  export DO_AP_STM_ENV=0
+  export SKIP_AP_COMPLETION_ENV=1
+  export SKIP_AP_GIT_CHECK=1
+
+  local tmpdir="/tmp/ardupilot_setup_repo"
+  rm -rf "${tmpdir}"
+  mkdir -p "${tmpdir}"
+
+  git clone --depth 1 --filter=blob:none --sparse --branch ${ARDUPILOT_REF} https://github.com/ArduPilot/ardupilot.git "$tmpdir"
+
+  pushd "${tmpdir}" >/dev/null
+
+  git sparse-checkout set Tools/environment_install Tools/completion
+
+  bash Tools/environment_install/install-prereqs-ubuntu.sh -y
+
+  popd >/dev/null
+  rm -rf "${tmpdir}"
 
   mkdir -p "${ARDUPILOT_DIR}"
-  echo "ArduPilot directory prepared at: ${ARDUPILOT_DIR}"
-  echo "NOTE: This script does not clone/build ArduPilot firmware yet (you can do that in apsetup later)."
+  echo "ArduPilot workspace directory prepared at: ${ARDUPILOT_DIR}"
+  echo "NOTE: This installs deps only; clone ArduPilot separately if desired."
 }
 
+# --------------------------
+# ArduPilot: ardupilot_gazebo plugin + SITL_Models
+# --------------------------
 detect_or_set_gz_overlay() {
   if [[ -n "${GZ_OVERLAY_SETUP}" ]]; then
     [[ -f "${GZ_OVERLAY_SETUP}" ]] || die "--gz-overlay-setup not found: ${GZ_OVERLAY_SETUP}"
@@ -493,10 +517,10 @@ if [[ "${WITH_PX4}" == "true" ]]; then
 fi
 
 if [[ "${WITH_ARDUPILOT}" == "true" ]]; then
-  prepare_ardupilot_dir
+  # install_ardupilot_deps
   install_ardupilot_gazebo_plugin
-  install_sitl_models
-  write_ardupilot_gz_env_snippet
+  # install_sitl_models
+  # write_ardupilot_gz_env_snippet
 fi
 
 echo ""

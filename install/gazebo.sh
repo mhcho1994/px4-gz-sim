@@ -265,12 +265,10 @@ install_ros_gz_source() {
   fi
 
   # Source ROS
-  # shellcheck disable=SC1091
   source "/opt/ros/${ROS_DISTRO}/setup.bash"
 
   # If Gazebo overlay exists (source install), source it; otherwise rely on system Gazebo
   if [[ -f "${GZ_WS_DIR}/install/setup.bash" ]]; then
-    # shellcheck disable=SC1090
     source "${GZ_WS_DIR}/install/setup.bash"
     echo "==> Using Gazebo overlay: ${GZ_WS_DIR}/install/setup.bash"
   else
@@ -324,6 +322,16 @@ install_gz_binary() {
 
   # ros_gz is handled separately
   install_ros_gz
+
+  echo ""
+  echo "Gazebo Binary Installation DONE."
+  echo "Installed at: /usr/bin/gz"
+  if [[ "${BUILD_ROS_GZ}" == "true" ]]; then
+    echo "Installed at: /opt/ros/humble/share/ros_gz_bridge (if built from binary):"
+    echo "To use the ros_gz overlay (if built from source):"
+    echo "  source ${ROS_GZ_WS_DIR}/install/setup.bash"
+  fi
+  echo ""
 }
 
 install_gz_source() {
@@ -368,10 +376,11 @@ install_gz_source() {
   install_ros_gz
 
   echo ""
-  echo "DONE."
+  echo "Gazebo Source Installation DONE."
   echo "To use the source-built Gazebo overlay:"
   echo "  source ${GZ_WS}/install/setup.bash"
   if [[ "${BUILD_ROS_GZ}" == "true" ]]; then
+    echo "Installed at: /opt/ros/humble/share/ros_gz_bridge (if built from binary):"
     echo "To use the ros_gz overlay (if built from source):"
     echo "  source ${ROS_GZ_WS_DIR}/install/setup.bash"
   fi
