@@ -128,7 +128,7 @@ export PYTHONWARNINGS=ignore:::setuptools.installer,ignore:::setuptools.command.
 #  - GZ_SIM_SYSTEM_PLUGIN_PATH
 #  - LD_LIBRARY_PATH additions
 # --------------------------
-ARDUPILOT_GZ_ENV="\${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/gazebo/ardupilot_gz_env.sh"
+ARDUPILOT_GZ_ENV="\${FLIGHTSTACK_SIM_ROOT}/gz/ardupilot_gz_env.sh"
 if [ -f "\${ARDUPILOT_GZ_ENV}" ]; then
   source "\${ARDUPILOT_GZ_ENV}"
 fi

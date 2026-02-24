@@ -1,0 +1,25 @@
+vehicle:
+  name: x500
+  sysid: 1
+
+sim:
+  px4:
+    sitl_dir: ~/ws/flightstack_sim/ap/px4
+    model: x500
+    instance: 0
+    mavlink_udp_port: 14540
+  gz:
+    world: iris_runway.sdf
+
+mission:
+  type: square_ne
+  size_m: 5
+  alt_m: 5
+  speed_m_s: 2
+  land: false
+
+logging:
+  telemetry_rate_hz: 20
+  outputs:
+    - telemetry.parquet
+    - status_text.log
