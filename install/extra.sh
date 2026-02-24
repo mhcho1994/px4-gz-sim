@@ -114,10 +114,8 @@ install_common_packages() {
 
   sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
     htop \
-    ipe \
     iproute2 \
     lcov \
-    menu \
     mesa-utils \
     openbox \
     python3-jinja2 \
@@ -216,4 +214,4 @@ install_qgc_prereqs
 download_qgc_appimage
 
 echo ""
-echo "DONE."
+echo "Extra Packages Installation DONE."

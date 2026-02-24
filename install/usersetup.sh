@@ -122,6 +122,45 @@ export PYTHONWARNINGS=ignore:::setuptools.installer,ignore:::setuptools.command.
 [ -f "/usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash" ] && source "/usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash"
 
 # --------------------------
+# ArduPilot Gazebo plugin environment (optional)
+# If ardupilot_gz_env.sh exists, source it to set:
+#  - ARDUPILOT_GZ_PLUGIN_PATH
+#  - GZ_SIM_SYSTEM_PLUGIN_PATH
+#  - LD_LIBRARY_PATH additions
+# --------------------------
+ARDUPILOT_GZ_ENV="\${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/gazebo/ardupilot_gz_env.sh"
+if [ -f "\${ARDUPILOT_GZ_ENV}" ]; then
+  source "\${ARDUPILOT_GZ_ENV}"
+fi
+
+EOF
+
+cat <<'EOF' >> "${tmpfile}"
+# --------------------------
+# ArduPilot environment
+#  - Ensure user-local bin is on PATH (MAVProxy, pip tools)
+#  - ArduPilot bash completion (sim_vehicle.py, waf, etc.)
+#  - ArduPilot Tools/autotest on PATH (for sim_vehicle.py, mavproxy helpers, etc.)
+# --------------------------
+export PATH="$HOME/.local/bin:$PATH"
+
+EOF
+
+cat <<EOF >> "${tmpfile}"
+ARDUPILOT_COMPLETION="\${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/completion/completion.bash"
+if [ -f "\${ARDUPILOT_COMPLETION}" ]; then
+  source "\${ARDUPILOT_COMPLETION}"
+fi
+
+if [ -d "${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/autotest" ]; then
+  export PATH="${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/autotest:${PATH}"
+fi
+
+if [ -f "${HOME}/.ardupilot_env" ]; then
+  source "${HOME}/.ardupilot_env"
+fi
+
+# --------------------------
 # flightstack_sim paths
 # --------------------------
 export FLIGHTSTACK_SIM_ROOT="${PROJECT_ROOT}"

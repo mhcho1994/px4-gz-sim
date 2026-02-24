@@ -342,7 +342,6 @@ install_micro_xrce_agent() {
   esac
 }
 
-
 # --------------------------
 # ArduPilot: deps (SITL)
 # --------------------------
@@ -441,7 +440,6 @@ install_ardupilot_gazebo_plugin() {
 
   detect_or_set_gz_overlay
   if [[ -n "${GZ_OVERLAY_SETUP}" ]]; then
-    # shellcheck disable=SC1090
     source "${GZ_OVERLAY_SETUP}"
     echo "==> Using Gazebo overlay for build: ${GZ_OVERLAY_SETUP}"
   else
@@ -517,10 +515,10 @@ if [[ "${WITH_PX4}" == "true" ]]; then
 fi
 
 if [[ "${WITH_ARDUPILOT}" == "true" ]]; then
-  # install_ardupilot_deps
+  install_ardupilot_deps
   install_ardupilot_gazebo_plugin
-  # install_sitl_models
-  # write_ardupilot_gz_env_snippet
+  install_sitl_models
+  write_ardupilot_gz_env_snippet
 fi
 
 echo ""

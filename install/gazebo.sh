@@ -33,6 +33,10 @@ BUILD_ROS_GZ="true"               # --no-ros-gz
 ROS_GZ_MODE="auto"                # --ros-gz auto|binary|source
 ROS_GZ_WS_DIR="${PROJECT_ROOT}/ros2/ros_gz_ws"
 
+# Enable OSRF rosdep rules for Gazebo keys (optional).
+# Mostly useful when source-building ros_gz and you want rosdep to resolve gz-* keys reliably.
+ENABLE_GZ_ROSDEP_RULES="false"    # --enable-gz-rosdep-rules
+
 # Where to fetch Gazebo repos from in source mode:
 #   - default: official Harmonic collection file from gazebodistro
 #   - you can override with --repos-yaml URL_OR_PATH
@@ -53,6 +57,9 @@ Options:
                               auto => follows --install (binary->binary, source->source)
       --no-ros-gz             Skip installing ros_gz entirely
 
+      --enable-gz-rosdep-rules
+                              Add OSRF Gazebo rosdep rules (00-gazebo.list). Useful for some source builds.
+
       --project-root PATH     Default: ${PROJECT_ROOT}
       --build-type TYPE       CMake build type (default: ${BUILD_TYPE})
       --repos-yaml SRC        (source mode) Repos YAML URL/path for Gazebo source
@@ -70,6 +77,9 @@ Examples:
 
   # Gazebo binary, but ros_gz from source
   bash gazebo.sh --install binary --ros-gz source
+
+  # Enable OSRF rosdep rules (optional for ardupilot gazebo plugin users, recommended if building ros_gz from source)
+  bash gazebo.sh --install source --ros-gz source --enable-gz-rosdep-rules
 EOF
 }
 
@@ -108,13 +118,17 @@ while [[ $# -gt 0 ]]; do
       BUILD_ROS_GZ="false"
       shift
       ;;
+    --enable-gz-rosdep-rules)
+      ENABLE_GZ_ROSDEP_RULES="true"
+      shift
+      ;;
     --project-root)
       [[ $# -ge 2 ]] || die "--project-root requires a path"
       PROJECT_ROOT="$2"
       shift 2
       # refresh derived paths
       GZ_WS_DIR="${PROJECT_ROOT}/gz/${GZ_VERSION}_ws"
-      ROS_GZ_WS_DIR="${PROJECT_ROOT}/ros/ros_gz_ws"
+      ROS_GZ_WS_DIR="${PROJECT_ROOT}/ros2/ros_gz_ws"
       ;;
     --build-type)
       [[ $# -ge 2 ]] || die "--build-type requires a value"
@@ -188,6 +202,48 @@ fetch_repos_yaml() {
 }
 
 # --------------------------
+# rosdep rules for Gazebo (OSRF)
+#   - Only needed when using rosdep to install deps for source builds
+#   - Safe to call multiple times (idempotent)
+# --------------------------
+install_gz_rosdep_rules() {
+  if [[ "${ENABLE_GZ_ROSDEP_RULES}" != "true" ]]; then
+    return 0
+  fi
+
+  echo ""
+  echo "==> Installing OSRF Gazebo rosdep rules (optional)"
+  echo "    GZ_VERSION=${GZ_VERSION}"
+  echo ""
+
+  if ! command -v rosdep >/dev/null 2>&1; then
+    echo "ERROR: rosdep not found. Install it first (e.g., sudo apt-get install python3-rosdep)." >&2
+    return 2
+  fi
+
+  local dst="/etc/ros/rosdep/sources.list.d/00-gazebo.list"
+  sudo mkdir -p "$(dirname "${dst}")"
+  sudo bash -c "wget -q https://raw.githubusercontent.com/osrf/osrf-rosdep/master/gz/00-gazebo.list -O '${dst}'"
+
+  # Initialize rosdep if needed
+  sudo rosdep init 2>/dev/null || true
+
+  # Sanity check (non-fatal)
+  local key=""
+  case "${GZ_VERSION}" in
+    harmonic) key="gz-harmonic" ;;
+    garden)   key="gz-garden" ;;
+    fortress) key="gz-fortress" ;;
+    ionic)    key="gz-ionic" ;;
+    *)        key="" ;;
+  esac
+  if [[ -n "${key}" ]]; then
+    rosdep resolve "${key}" >/dev/null 2>&1 || \
+      echo "WARNING: rosdep could not resolve ${key}. This may be ok depending on OS/ROS pairing."
+  fi
+}
+
+# --------------------------
 # ros_gz helpers (binary/source)
 # --------------------------
 install_ros_gz_binary() {
@@ -201,10 +257,6 @@ install_ros_gz_binary() {
   echo "    ROS_DISTRO=${ROS_DISTRO}, GZ_VERSION=${GZ_VERSION}"
   echo ""
 
-  # Pairing logic:
-  # - Humble officially pairs with Fortress (recommended).
-  # - Humble + Harmonic is possible via non-official OSRF binaries: ros-humble-ros-gzharmonic,
-  #   which can conflict with ros-humble-ros-gz* packages.
   if [[ "${ROS_DISTRO}:${GZ_VERSION}" == "humble:harmonic" ]]; then
     # Ensure Fortress-paired packages aren't installed (conflict risk).
     if dpkg -l | grep -q "^ii  ros-${ROS_DISTRO}-ros-gz "; then
@@ -237,10 +289,12 @@ install_ros_gz_binary() {
 install_ros_gz_source() {
   echo ""
   echo "==> Building ros_gz (${ROS_DISTRO}) from source"
-  echo "    (works with Gazebo=${INSTALL_MODE}; uses overlay if available)"
+  echo "    (uses Gazebo overlay if available)"
   echo ""
 
-  # Tooling
+  local ros_setup="/opt/ros/${ROS_DISTRO}/setup.bash"
+  [[ -f "${ros_setup}" ]] || die "ROS 2 setup not found: ${ros_setup} (install ROS 2 ${ROS_DISTRO} first)"
+
   sudo apt-get -y update
   sudo apt-get -y --no-install-recommends install \
     git \
@@ -249,10 +303,12 @@ install_ros_gz_source() {
     pkg-config \
     build-essential \
     python3-rosdep \
-    python3-colcon-common-extensions
+    python3-colcon-common-extensions \
+    python3-vcstool
 
   # rosdep setup (safe if already initialized)
   sudo rosdep init 2>/dev/null || true
+  install_gz_rosdep_rules
   rosdep update
 
   local ROS_GZ_WS="${ROS_GZ_WS_DIR}"
@@ -265,22 +321,22 @@ install_ros_gz_source() {
   fi
 
   # Source ROS
-  source "/opt/ros/${ROS_DISTRO}/setup.bash"
+  source "${ros_setup}"
 
-  # If Gazebo overlay exists (source install), source it; otherwise rely on system Gazebo
+  # Use Gazebo overlay if present
   if [[ -f "${GZ_WS_DIR}/install/setup.bash" ]]; then
     source "${GZ_WS_DIR}/install/setup.bash"
     echo "==> Using Gazebo overlay: ${GZ_WS_DIR}/install/setup.bash"
   else
     echo "==> No Gazebo overlay found at ${GZ_WS_DIR}/install/setup.bash"
     echo "    Building ros_gz against system Gazebo (ensure gz + dev packages are installed)."
-    # Best-effort: install common bridge build deps if available.
-    # (Exact Gazebo dev package names vary by distro/GZ version; users may already have them.)
-    sudo DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
-      python3-vcstool || true
   fi
 
   cd "${ROS_GZ_WS}"
+
+  # Best-effort dependency install:
+  # - -r: continue resolving/installing even if some keys fail
+  # - -i: ignore packages already in src (same as --ignore-src)
   rosdep install -r --from-paths src -i -y --rosdistro "${ROS_DISTRO}" || true
 
   echo "==> colcon build (ros_gz)"

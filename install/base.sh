@@ -111,4 +111,4 @@ python3 -m pip install --upgrade pip
 # --------------------------
 # Notes / next steps
 # --------------------------
-echo "Base Packages Installed."
+echo "Base Packages Installation DONE."
