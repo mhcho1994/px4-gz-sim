@@ -2,6 +2,8 @@
 /ros2
 /gz
 /tools
+/venv
+
 !.gitignore
 eeprom.bin
 mav.tlog
