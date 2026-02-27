@@ -23,7 +23,7 @@
 # --------------------------
 DEBUG="false"
 ROS_VERSION="humble"
-PROJECT_ROOT="/home/${USER}/ws/flightstack_sim"
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 
 help() {
   cat <<EOF

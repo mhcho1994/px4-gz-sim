@@ -16,11 +16,11 @@
 # --------------------------
 # Defaults
 # --------------------------
-DEBUG="false"                              # --debug
-DO_UPGRADE="false"                         # --upgrade
-INSTALL_QGC="true"                         # --no-qgc
-PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
-QGC_DIR="${PROJECT_ROOT}/tools"            # <-- updated default
+DEBUG="false"                           # --debug
+DO_UPGRADE="false"                      # --upgrade
+INSTALL_QGC="true"                      # --no-qgc
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"  # --project-root as current working
+QGC_DIR="${PROJECT_ROOT}/tools/QGC"     # <-- updated default
 QGC_URL="https://d176tv9ibo4jno.cloudfront.net/latest/QGroundControl-x86_64.AppImage"
                                  # --qgc-url (optional override)
 
