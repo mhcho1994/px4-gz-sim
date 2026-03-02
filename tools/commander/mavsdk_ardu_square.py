@@ -123,7 +123,7 @@ def main():
     ]
 
     items = []
-
+    
     # 4 WAYPOINTs
     for north_m, east_m in corners:
         lat, lon = add_north_east_m_to_gps(home_lat, home_lon, north_m, east_m)

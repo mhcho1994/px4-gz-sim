@@ -1,9 +1,9 @@
 /ap
 /ros2
 /gz
-/tools
+/tools/QGC
 /venv
-
+/data
 !.gitignore
 eeprom.bin
 mav.tlog
