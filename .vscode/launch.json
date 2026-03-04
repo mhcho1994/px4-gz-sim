@@ -25,6 +25,37 @@
       }
     },
     {
+      "name": "Debug: Scenario Generator",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/scenario/scenario_generator.py",
+      "args": [
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    {
+      "name": "Debug: mavsdk_ardu_square",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/commander/mavsdk_ardu_square.py",
+      "args": [
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+
+    {
       "name": "Debug: Test",
       "type": "python",
       "request": "launch",

@@ -57,6 +57,14 @@ def _popen(
       the whole tree (parent + children) later.
     - Logs are line-buffered for real-time tailing (tail -f).
     """
+    print(f"[LAUNCH] {name}: {' '.join(cmd)}")
+    print(f"[CWD]    {name}: {cwd if cwd else os.getcwd()}")
+    print(f"[LOG]    {name}: {log_path}")
+    print(f"[ENV]    PATH={os.environ.get('PATH','')}")
+    print(f"[ENV]    VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV','')}")
+    print(f"[ENV]    CONDA_PREFIX={os.environ.get('CONDA_PREFIX','')}")
+
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Line-buffered text logs (buffering=1 works with text=True).
@@ -241,28 +249,31 @@ def run_once(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run-dir", type=Path, required=True, help="./data/run_xxx directory containing scenario.yaml")
+    # ap.add_argument("--run-dir", type=Path, required=True, help="./data/run_xxx directory containing scenario.yaml")
+    
+
+    
+    
+    # run_dir = args.run_dir.resolve()
+    # scenario_path = run_dir / "scenario.yaml"
+    # logs_dir = run_dir / "ardu_logs"
+    # logs_dir.mkdir(parents=True, exist_ok=True)
+
+    ap.add_argument("--runs", type=int, default=1, help="Number of runs to execute")
     ap.add_argument("--instance-base", type=int, default=0)
+
+    ap.add_argument("--outdir", type=Path, default=Path("./data/run_xxx/ardu_logs"))
+
+    ap.add_argument("--world", type=str, default="iris_runway.sdf")
+    ap.add_argument("--location", type=str, default="Purdue")
+    
+    ap.add_argument("--out-port-base", type=int, default=14550)
+    ap.add_argument("--startup-delay", type=float, default=5.0)
+    ap.add_argument("--max-run-s", type=float, default=60.0)
+
     args = ap.parse_args()
-    
-    
-    run_dir = args.run_dir.resolve()
-    scenario_path = run_dir / "scenario.yaml"
-    logs_dir = run_dir / "ardu_logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
 
-
-
-    # ap.add_argument("--out-dir", type=Path, default=Path("./data/run_xxx/ardu_logs"))
-
-    # ap.add_argument("--world", type=str, default="iris_runway.sdf")
-    # ap.add_argument("--location", type=str, default="Purdue")
-    
-    # ap.add_argument("--out-port-base", type=int, default=14550)
-    # ap.add_argument("--startup-delay", type=float, default=5.0)
-    # ap.add_argument("--max-run-s", type=float, default=60.0)
-
-    # args.outdir.mkdir(parents=True, exist_ok=True)
+    args.outdir.mkdir(parents=True, exist_ok=True)
 
     stop = {"flag": False}
     current = {"sitl": None, "gz": None}
