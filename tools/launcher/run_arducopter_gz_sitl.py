@@ -32,7 +32,25 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TextIO
+from typing import Any, Optional, TextIO
+import yaml
+
+
+@dataclass
+class ScenarioConfig:
+    # sim instance parameters
+    instance: int = 0
+    outport: int = 14550
+    startup_delay_s: float = 0.0
+    max_run_s: float = 60.0
+
+    # sim setup
+    vehicle: str = "ArduCopter"
+    frame: str = "gazebo-iris"
+    model: str = "JSON"
+    world: str = "iris_runway"
+    location: str = "Purdue"
+    scenario_name: str = "turn3pts"
 
 
 @dataclass
@@ -60,9 +78,9 @@ def _popen(
     print(f"[LAUNCH] {name}: {' '.join(cmd)}")
     print(f"[CWD]    {name}: {cwd if cwd else os.getcwd()}")
     print(f"[LOG]    {name}: {log_path}")
-    print(f"[ENV]    PATH={os.environ.get('PATH','')}")
-    print(f"[ENV]    VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV','')}")
-    print(f"[ENV]    CONDA_PREFIX={os.environ.get('CONDA_PREFIX','')}")
+    # print(f"[ENV]    PATH={os.environ.get('PATH','')}")
+    # print(f"[ENV]    VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV','')}")
+    # print(f"[ENV]    CONDA_PREFIX={os.environ.get('CONDA_PREFIX','')}")
 
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +193,17 @@ def build_sitl_cmd(instance: int, out_port: int, location: str) -> list[str]:
     ]
 
 
+def build_mavconsole_cmd(out_port: int) -> list[str]:
+    """
+    Build the mavconsole command to connect to the SITL instance.
+
+    Example:
+      mavconsole.py --master=udp:
+    """
+
+    return ["mavconsole.py", f"--master=udp:127.0.0.1:{out_port}"]
+
+
 def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
     """
     Build the Gazebo Sim command.
@@ -186,135 +215,205 @@ def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
 
 
 def run_once(
-    run_id: int,
-    base_dir: Path,
-    world_sdf: str,
-    location: str,
-    instance_base: int,
-    out_port_base: int,
+    instance: int,
+    logs_dir: Path,
+    outport: int,
     startup_delay_s: float,
     max_run_s: float,
-    # NEW: pass in stop flag and current process holders for signal handler
     stop: dict,
     current: dict,
+    vehicle: str,
+    frame: str,
+    model: str, 
+    world: str,
+    location: str,
 ) -> int:
-    run_dir = base_dir / f"run_{run_id:03d}"
-    run_dir.mkdir(parents=True, exist_ok=True)
 
-    instance = instance_base + run_id
-    out_port = out_port_base + run_id
+    sitl_log = logs_dir / "sitl.log"
+    gz_log = logs_dir / "gazebo.log"
 
-    sitl_log = run_dir / "sitl.log"
-    gz_log = run_dir / "gazebo.log"
-
-    gz = _popen("gazebo", build_gz_cmd(world_sdf), cwd=run_dir, log_path=gz_log)
-    current["gz"] = gz
+    # if current.get("gz") is None:
+    #     gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf"), cwd=logs_dir, log_path=gz_log)
+    #     current["gz"] = gz
 
     time.sleep(startup_delay_s)
+    print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
 
-    sitl = _popen("sitl", build_sitl_cmd(instance, out_port, location), cwd=run_dir, log_path=sitl_log)
+    sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
     current["sitl"] = sitl
 
-    t0 = time.time()
+    # t0 = time.time()
+    # rc = 0
+
+    # while True:
+    #     # NEW: if user pressed Ctrl+C, exit loop immediately
+    #     if stop["flag"]:
+    #         rc = 130
+    #         break
+
+    #     if sitl.proc.poll() is not None:
+    #         rc = sitl.proc.returncode or 0
+    #         break
+
+    #     if gz.proc.poll() is not None:
+    #         rc = gz.proc.returncode or 0
+    #         break
+
+    #     if time.time() - t0 > max_run_s:
+    #         rc = 0
+    #         break
+
+    #     time.sleep(0.2)
+
+    # # Cleanup (always)
+    # _finalize_proc(current.get("gz"))
+    # _finalize_proc(current.get("sitl"))
+    # current["gz"] = None
+    # current["sitl"] = None
+
     rc = 0
-
-    while True:
-        # NEW: if user pressed Ctrl+C, exit loop immediately
-        if stop["flag"]:
-            rc = 130
-            break
-
-        if sitl.proc.poll() is not None:
-            rc = sitl.proc.returncode or 0
-            break
-
-        if gz.proc.poll() is not None:
-            rc = gz.proc.returncode or 0
-            break
-
-        if time.time() - t0 > max_run_s:
-            rc = 0
-            break
-
-        time.sleep(0.2)
-
-    # Cleanup (always)
-    _finalize_proc(current.get("gz"))
-    _finalize_proc(current.get("sitl"))
-    current["gz"] = None
-    current["sitl"] = None
 
     return rc
 
 
+def _load_scenario_yaml(run_dir: Path) -> ScenarioConfig:
+    """
+    Load scenario.yaml from run_dir.
+
+    Supported keys (example):
+      instance_base: 0
+      world: iris_runway.sdf
+      location: Purdue
+    """
+    scenario_path = run_dir / "scenario.yaml"
+    if not scenario_path.exists():
+        raise FileNotFoundError(f"Missing scenario.yaml: {scenario_path}")
+
+    data: dict[str, Any] = yaml.safe_load(scenario_path.read_text(encoding="utf-8")) or {}
+
+    # Accept both top-level keys and nested (e.g., {"sim": {...}})
+    # You can extend this mapping if your scenario.yaml has a different schema.
+    sim = data.get("autopilots",{}).get("ardupilot",{}).get("sim",{})
+    scenario = data.get("common",{}).get("scenario",{})
+    cfg = ScenarioConfig(
+        instance=int(sim.get("instance", ScenarioConfig.instance)),
+        vehicle=str(sim.get("vehicle", ScenarioConfig.vehicle)),
+        frame=str(sim.get("frame", ScenarioConfig.frame)),
+        model=str(sim.get("model", ScenarioConfig.model)),
+        world=str(sim.get("world", ScenarioConfig.world)),
+        location=str(sim.get("location", ScenarioConfig.location)),
+        scenario_name=str(scenario.get("name", ScenarioConfig.scenario_name))
+    )
+    return cfg
+
+
+def _iter_run_dirs(data_root: Path) -> list[Path]:
+    """
+    Find ./data/run_* directories, sorted by name.
+    """
+    if not data_root.exists():
+        return []
+    return sorted([p for p in data_root.iterdir() if p.is_dir() and p.name.startswith("run_")])
+
+
+def _should_skip_run_dir(run_dir: Path, force: bool) -> bool:
+    """
+    Skip if 'ardu_logs' exists.
+    """
+    logs_dir = run_dir / "ardu_logs"
+    if force:
+        return False
+    bin_files = list(logs_dir.rglob("*.BIN"))
+    return logs_dir.exists() and (len(bin_files) > 0)
+
+
 def main() -> int:
+    # Parse command-line arguments
     ap = argparse.ArgumentParser()
-    # ap.add_argument("--run-dir", type=Path, required=True, help="./data/run_xxx directory containing scenario.yaml")
-    
-
-    
-    
-    # run_dir = args.run_dir.resolve()
-    # scenario_path = run_dir / "scenario.yaml"
-    # logs_dir = run_dir / "ardu_logs"
-    # logs_dir.mkdir(parents=True, exist_ok=True)
-
-    ap.add_argument("--runs", type=int, default=1, help="Number of runs to execute")
-    ap.add_argument("--instance-base", type=int, default=0)
-
-    ap.add_argument("--outdir", type=Path, default=Path("./data/run_xxx/ardu_logs"))
-
-    ap.add_argument("--world", type=str, default="iris_runway.sdf")
-    ap.add_argument("--location", type=str, default="Purdue")
-    
-    ap.add_argument("--out-port-base", type=int, default=14550)
-    ap.add_argument("--startup-delay", type=float, default=5.0)
+    ap.add_argument("--run-root", type=Path, default=Path("./data"), help="Root folder containing run_xxx/scenario.yaml and run_xxx/ardu_logs")
+    ap.add_argument("--force", action="store_true", help="Re-run even if run_xxx/ardu_logs exists")
+    ap.add_argument("--outport", type=int, default=14550)
+    ap.add_argument("--startup-delay-s", type=float, default=5.0)
     ap.add_argument("--max-run-s", type=float, default=60.0)
-
     args = ap.parse_args()
 
-    args.outdir.mkdir(parents=True, exist_ok=True)
+    # Access to the resolved run root path
+    data_root = args.run_root.resolve()
 
     stop = {"flag": False}
-    current = {"sitl": None, "gz": None}
+    current: dict[str, Optional["ProcHandle"]] = {"sitl": None, "gz": None}  
 
+    # Mark stop flag and terminate running processes on SIGINT/SIGTERM
     def _sig(_signum, _frame):
-        # Mark stop
         stop["flag"] = True
-        # IMPORTANT: immediately kill running processes (so ArduPilot doesn't linger)
+        # immediately kill running processes (so ArduPilot doesn't linger)
         _finalize_proc(current.get("gz"))
+        _finalize_proc(current.get("mavconsole"))
         _finalize_proc(current.get("sitl"))
         current["gz"] = None
         current["sitl"] = None
+        current["mavconsole"] = None
 
+    # Terminate on Ctrl+C or SIGTERM
     signal.signal(signal.SIGINT, _sig)
     signal.signal(signal.SIGTERM, _sig)
 
-    for i in range(args.runs):
+    # Iterations for run directories
+    run_dirs = _iter_run_dirs(data_root)
+    if not run_dirs:
+        print(f"No run_xxx directories found under: {data_root}")
+        return 2
+    
+    overall_rc = 0
+
+    for run_dir in run_dirs:
         if stop["flag"]:
             print("Interrupted. Exiting.")
             return 130
 
-        print(f"\n=== RUN {i+1}/{args.runs} ===")
+        if _should_skip_run_dir(run_dir, force=args.force):
+            print(f"[SKIP] {run_dir} (ardu_logs exists)")
+            continue
+
+        # Load scenario.yaml
+        try:
+            cfg = _load_scenario_yaml(run_dir)
+        except Exception as e:
+            print(f"[ERROR] {run_dir}: failed to load scenario.yaml: {e}")
+            overall_rc = 2
+            continue
+
+        # Create output directory for this run
+        logs_root = run_dir / "ardu_logs"
+        logs_root.mkdir(parents=True, exist_ok=True)
+
+        # Set other configurations
+        cfg.outport = args.outport
+        cfg.startup_delay_s = args.startup_delay_s
+        cfg.max_run_s = args.max_run_s
+
+        print(f"\n=== SCENARIO: {run_dir.name} ===")
+        print(f"  world={cfg.world} location={cfg.location}")
+        print(f"  instance={cfg.instance} outport={cfg.outport}")
+        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s}")
+        print(f"  logs_root={logs_root}")
+
+        # Execute the scenario
+        print(f"\n--- {run_dir.name}: RUN {cfg.scenario_name} Scenario ---")
         rc = run_once(
-            run_id=i,
-            base_dir=args.outdir,
-            world_sdf=args.world,
-            location=args.location,
-            instance_base=args.instance_base,
-            out_port_base=args.out_port_base,
-            startup_delay_s=args.startup_delay,
-            max_run_s=args.max_run_s,
+            instance=cfg.instance,
+            logs_dir=logs_root,
+            outport=cfg.outport,
+            startup_delay_s=cfg.startup_delay_s,
+            max_run_s=cfg.max_run_s,
             stop=stop,
             current=current,
+            vehicle=cfg.vehicle,
+            frame=cfg.frame,
+            model=cfg.model,
+            world=cfg.world,
+            location=cfg.location
         )
-        print(f"Run {i+1} finished with rc={rc}. Logs in {args.outdir / f'run_{i:03d}'}")
-
-        if stop["flag"]:
-            return 130
-
-        time.sleep(2.0)
-
     return 0
 
 

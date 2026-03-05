@@ -2,19 +2,16 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug: ArduPilot+Gazebo multi-run launcher",
+      "name": "Debug: ArduPilot+Gazebo launcher",
       "type": "python",
       "request": "launch",
+      "python": "/usr/bin/python3",
       "program": "${workspaceFolder}/tools/launcher/run_arducopter_gz_sitl.py",
       "args": [
-        "--run-dir", "./data/run_000",
-        // "--outdir", "${workspaceFolder}/data",
-        // "--world", "iris_runway.sdf",
-        // "--location", "Purdue",
-        "--instance-base", "0",
-        // "--out-port-base", "14550",
-        // "--startup-delay", "5",
-        // "--max-run-s", "60"
+        "--run-root", "./data",
+        "--outport", "14550",
+        "--startup-delay", "5",
+        "--max-run-s", "120"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -54,7 +51,6 @@
         "PYTHONUNBUFFERED": "1"
       }
     },
-
     {
       "name": "Debug: Test",
       "type": "python",
