@@ -4,10 +4,6 @@ Multi-run launcher for ArduPilot ArduCopter SITL + Gazebo (gz sim).
 
 What this script does:
   - Repeats N simulation runs.
-
-
-
-
   - For each run:
       1) Launch ArduPilot SITL via sim_vehicle.py (gazebo-iris, JSON model)
       2) Wait a bit for SITL to initialize
@@ -178,6 +174,9 @@ def build_sitl_cmd(instance: int, out_port: int, location: str) -> list[str]:
       - `-I <instance>` helps separate multiple runs (some paths/ports are derived).
       - `--out=udp:127.0.0.1:<port>` is useful if you want to connect QGC/MAVSDK.
       - `--no-rebuild` makes repeated runs faster.
+              f"--location={location}",
+                      "-I", str(instance),
+                              "--no-rebuild",
     """
     return [
         "sim_vehicle.py",
@@ -187,9 +186,6 @@ def build_sitl_cmd(instance: int, out_port: int, location: str) -> list[str]:
         "--map",
         "--console",
         f"--out=udp:127.0.0.1:{out_port}",
-        f"--location={location}",
-        "-I", str(instance),
-        "--no-rebuild",
     ]
 
 
@@ -198,10 +194,10 @@ def build_mavconsole_cmd(out_port: int) -> list[str]:
     Build the mavconsole command to connect to the SITL instance.
 
     Example:
-      mavconsole.py --master=udp:
+      mavproxy.py --master=udp:127.0.0.1:14550
     """
 
-    return ["mavconsole.py", f"--master=udp:127.0.0.1:{out_port}"]
+    return ["mavproxy.py", f"--master=udp:127.0.0.1:{out_port}"]
 
 
 def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
@@ -232,9 +228,9 @@ def run_once(
     sitl_log = logs_dir / "sitl.log"
     gz_log = logs_dir / "gazebo.log"
 
-    # if current.get("gz") is None:
-    #     gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf"), cwd=logs_dir, log_path=gz_log)
-    #     current["gz"] = gz
+    if current.get("gz") is None:
+        gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
+        current["gz"] = gz
 
     time.sleep(startup_delay_s)
     print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")

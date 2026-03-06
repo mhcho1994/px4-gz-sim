@@ -99,7 +99,7 @@ awk -v begin="${MARK_BEGIN}" -v end="${MARK_END}" '
   !inblock {print}
 ' "${BASHRC}" > "${tmpfile}"
 
-cat <<EOF >> "${tmpfile}"
+cat << EOF >> "${tmpfile}"
 ${MARK_BEGIN}
 # --------------------------
 # ROS 2 base environment
@@ -135,25 +135,23 @@ fi
 
 EOF
 
-cat <<'EOF' >> "${tmpfile}"
+cat << EOF >> "${tmpfile}"
 # --------------------------
 # ArduPilot environment
 #  - Ensure user-local bin is on PATH (MAVProxy, pip tools)
 #  - ArduPilot bash completion (sim_vehicle.py, waf, etc.)
 #  - ArduPilot Tools/autotest on PATH (for sim_vehicle.py, mavproxy helpers, etc.)
 # --------------------------
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="\$HOME/.local/bin:\$PATH"
 
-EOF
-
-cat <<EOF >> "${tmpfile}"
-ARDUPILOT_COMPLETION="\${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/completion/completion.bash"
+ARDUPILOT_COMPLETION="${PROJECT_ROOT}/ap/ardupilot/Tools/completion/completion.bash"
 if [ -f "\${ARDUPILOT_COMPLETION}" ]; then
   source "\${ARDUPILOT_COMPLETION}"
 fi
 
-if [ -d "${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/autotest" ]; then
-  export PATH="${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot/Tools/autotest:${PATH}"
+ARDUPILOT_AUTOTEST_PATH="${PROJECT_ROOT}/ap/ardupilot/Tools/autotest"
+if [ -d "\${ARDUPILOT_AUTOTEST_PATH}" ]; then
+  export PATH="\${ARDUPILOT_AUTOTEST_PATH}:\$PATH"
 fi
 
 if [ -f "${HOME}/.ardupilot_env" ]; then
