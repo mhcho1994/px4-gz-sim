@@ -10,8 +10,8 @@
       "args": [
         "--run-root", "./data",
         "--outport", "14550",
-        "--startup-delay", "5",
-        "--max-run-s", "120"
+        "--startup-delay", "2",
+        "--max-run-s", "180"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

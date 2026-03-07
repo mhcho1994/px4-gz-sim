@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import signal
 import subprocess
 import time
@@ -63,6 +64,7 @@ def _popen(
     cmd: list[str],
     cwd: Optional[Path],
     log_path: Path,
+    verbose: bool = False
 ) -> ProcHandle:
     """
     Start a subprocess and redirect stdout/stderr into a log file.
@@ -74,10 +76,10 @@ def _popen(
     print(f"[LAUNCH] {name}: {' '.join(cmd)}")
     print(f"[CWD]    {name}: {cwd if cwd else os.getcwd()}")
     print(f"[LOG]    {name}: {log_path}")
-    # print(f"[ENV]    PATH={os.environ.get('PATH','')}")
-    # print(f"[ENV]    VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV','')}")
-    # print(f"[ENV]    CONDA_PREFIX={os.environ.get('CONDA_PREFIX','')}")
 
+    if verbose:
+        # TODO: add virtual env or other environment variables if needed
+        print(f"[ENV]    PATH={os.environ.get('PATH','')}")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -98,51 +100,229 @@ def _popen(
     return ProcHandle(name=name, proc=proc, log_path=log_path, log_file=f)
 
 
+def _run_quiet(cmd: str) -> None:
+    """Run a shell command quietly, ignoring all errors."""
+    try:
+        subprocess.run(
+            cmd,
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+def _pkill_patterns(patterns: list[str], sig: str) -> None:
+    """
+    Send a signal to processes matched by full command line.
+
+    Parameters
+    ----------
+    patterns : list[str]
+        Patterns passed to `pkill -f`.
+    sig : str
+        Signal name such as 'TERM' or 'KILL'.
+    """
+    if os.name == "nt":
+        return
+
+    for pattern in patterns:
+        _run_quiet(f"pkill -{sig} -f {shlex.quote(pattern)}")
+
+
+def _cleanup_gz_processes() -> None:
+    """
+    Best-effort cleanup for Gazebo / gz sim related processes that may survive
+    after killing the parent shell/process group.
+
+    Why needed:
+    - Killing the bash PID or even its process group does not always terminate
+      the actual gz server process.
+    - Depending on the setup, Gazebo may appear as:
+        * gz sim
+        * gzserver / gzclient
+        * ign gazebo / ignition gazebo
+    """
+    if os.name == "nt":
+        return
+
+    patterns = [
+        r"gz sim",
+        r"gz sim server",
+        r"gz sim gui",
+    ]
+
+    # Graceful termination first
+    _pkill_patterns(patterns, "INT")
+
+def _cleanup_sitl_processes() -> None:
+    """Best-effort cleanup for common ArduPilot SITL related processes."""
+    if os.name == "nt":
+        return
+
+    patterns = [
+        r"sim_vehicle.py",
+        r"arducopter",
+        r"ArduCopter",
+        r"arduplane",
+        r"ArduPlane",
+        r"ardurover",
+        r"ArduRover",
+        r"ardusub",
+        r"ArduSub",
+        r"antennatracker",
+        r"AntennaTracker",
+    ]
+
+    _pkill_patterns(patterns, "INT")
+
+
+def _cleanup_mavproxy_processes() -> None:
+    """
+    Best-effort cleanup for MAVProxy related processes that may survive
+    after killing the parent shell/process group.
+
+    Why needed:
+    - Killing the bash PID or even its process group does not always terminate
+      the actual mavproxy process.
+    - Depending on the setup, MAVProxy may appear as:
+        * mavproxy
+    """
+    if os.name == "nt":
+        return
+
+    patterns = [
+        r"mavproxy",
+    ]
+
+    # Graceful termination first
+    _pkill_patterns(patterns, "INT")
+
+
+# def _kill_tree(ph: ProcHandle, grace_s: float = 5.0) -> None:
+    # """
+    # Terminate a process *and its child processes*.
+
+    # Strategy:
+    #   1) Send SIGTERM to the process group (POSIX) / terminate() on Windows.
+    #   2) Wait up to `grace_s` for a clean exit.
+    #   3) If still alive, force kill (SIGKILL / kill()).
+    #   4) Additionally clean up stray gz/Gazebo processes that may survive
+    #      outside the expected process group.
+
+    # This is important for sim_vehicle.py because it often spawns:
+    #   - mavproxy.py
+    #   - the SITL binary (arducopter)
+    #   - auxiliary helper processes
+
+    # And for gz sim because:
+    #   - killing the wrapper bash PID is sometimes not enough
+    #   - the actual simulator process may remain alive
+    # """
+    # # If already exited, still do a best-effort gz cleanup because the child
+    # # wrapper may be gone while gz itself is still alive.
+    # already_exited = (ph.proc.poll() is not None)
+
+    # if not already_exited:
+    #     # Soft terminate
+    #     try:
+    #         if os.name != "nt":
+    #             # Kill the entire process group
+    #             os.killpg(os.getpgid(ph.proc.pid), signal.SIGTERM)
+    #         else:
+    #             ph.proc.terminate()
+    #     except Exception:
+    #         # Process may have exited between checks
+    #         pass
+
+    #     # Wait for graceful shutdown
+    #     t0 = time.time()
+    #     while time.time() - t0 < grace_s:
+    #         if ph.proc.poll() is not None:
+    #             break
+    #         time.sleep(0.1)
+
+    #     # Hard kill if still alive
+    #     if ph.proc.poll() is None:
+    #         try:
+    #             if os.name != "nt":
+    #                 os.killpg(os.getpgid(ph.proc.pid), signal.SIGKILL)
+    #             else:
+    #                 ph.proc.kill()
+    #         except Exception:
+    #             pass
+
+
+
 def _kill_tree(ph: ProcHandle, grace_s: float = 5.0) -> None:
     """
-    Terminate a process *and its child processes*.
+    Terminate a process and its descendants.
 
-    Strategy:
-      1) Send SIGTERM to the process group (POSIX) / terminate() on Windows.
-      2) Wait up to `grace_s` for a clean exit.
-      3) If still alive, force kill (SIGKILL / kill()).
-
-    This is important for sim_vehicle.py because it often spawns:
-      - mavproxy.py
-      - the SITL binary (arducopter)
-      - auxiliary helper processes
+    For interactive tools such as sim_vehicle.py, we try SIGINT first
+    because it is closer to Ctrl-C and may allow cleaner shutdown.
+    Then we escalate to SIGTERM and finally SIGKILL.
     """
-    # If already exited, nothing to do.
     if ph.proc.poll() is not None:
         return
 
-    # Soft terminate
+    if os.name != "nt":
+        try:
+            pgid = os.getpgid(ph.proc.pid)
+        except Exception:
+            pgid = None
+    else:
+        pgid = None
+
+    # 1) Try SIGINT first (best for sim_vehicle.py / SITL style processes)
     try:
-        if os.name != "nt":
-            # Kill the entire process group
-            os.killpg(os.getpgid(ph.proc.pid), signal.SIGTERM)
+        if os.name != "nt" and pgid is not None:
+            os.killpg(pgid, signal.SIGINT)
         else:
-            ph.proc.terminate()
+            ph.proc.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
     except Exception:
-        # We ignore exceptions because sometimes processes exit between checks.
         pass
 
-    # Wait for graceful shutdown
     t0 = time.time()
-    while time.time() - t0 < grace_s:
+    while time.time() - t0 < min(grace_s, 2.0):
         if ph.proc.poll() is not None:
             return
         time.sleep(0.1)
 
-    # Hard kill
+    # 2) Escalate to SIGTERM
     try:
-        if os.name != "nt":
-            os.killpg(os.getpgid(ph.proc.pid), signal.SIGKILL)
+        if os.name != "nt" and pgid is not None:
+            os.killpg(pgid, signal.SIGTERM)
+        else:
+            ph.proc.terminate()
+    except Exception:
+        pass
+
+    t1 = time.time()
+    while time.time() - t1 < max(grace_s - 2.0, 1.0):
+        if ph.proc.poll() is not None:
+            return
+        time.sleep(0.1)
+
+    # 3) Final hard kill
+    try:
+        if os.name != "nt" and pgid is not None:
+            os.killpg(pgid, signal.SIGKILL)
         else:
             ph.proc.kill()
     except Exception:
         pass
 
+    # Final fallback cleanup for Gazebo/gz leftovers
+    if "gz" in ph.name:
+        _cleanup_gz_processes()
+
+    if "sitl" in ph.name:
+        _cleanup_sitl_processes()
+
+    if "mavproxy" in ph.name:
+        _cleanup_mavproxy_processes()
 
 def _finalize_proc(ph: Optional[ProcHandle]) -> None:
     """Best-effort: ensure process is dead and log file is closed."""
@@ -174,30 +354,35 @@ def build_sitl_cmd(instance: int, out_port: int, location: str) -> list[str]:
       - `-I <instance>` helps separate multiple runs (some paths/ports are derived).
       - `--out=udp:127.0.0.1:<port>` is useful if you want to connect QGC/MAVSDK.
       - `--no-rebuild` makes repeated runs faster.
-              f"--location={location}",
-                      "-I", str(instance),
-                              "--no-rebuild",
+      TODO: adding the following options
+        "-I", str(instance),
+        "--no-rebuild",
     """
     return [
         "sim_vehicle.py",
         "-v", "ArduCopter",
         "-f", "gazebo-iris",
         "--model", "JSON",
-        "--map",
-        "--console",
+        f"--location={location}",
         f"--out=udp:127.0.0.1:{out_port}",
     ]
 
 
-def build_mavconsole_cmd(out_port: int) -> list[str]:
+def build_mavproxy_cmd(out_port: int) -> list[str]:
     """
-    Build the mavconsole command to connect to the SITL instance.
+    Build the mavproxy command to connect to the SITL instance.
+    Open the mavconsole and map to monitor MAVLink messages.
 
     Example:
       mavproxy.py --master=udp:127.0.0.1:14550
     """
 
-    return ["mavproxy.py", f"--master=udp:127.0.0.1:{out_port}"]
+    return [
+        "mavproxy.py", 
+        f"--master=udp:127.0.0.1:{out_port}",
+        "--map",
+        "--console",
+    ]
 
 
 def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
@@ -208,6 +393,21 @@ def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
       gz sim -v4 -r iris_runway.sdf
     """
     return ["gz", "sim", verbose, "-r", world_sdf]
+
+
+def launch_commander(run_dir: Path, scenario_path: Path) -> ProcHandle:
+    cmd = [
+        "python3",
+        "tools/commander/mavsdk_ardupilot_commander.py",
+        "--scenario",
+        str(scenario_path),
+    ]
+    return launch_process(
+        name="commander",
+        cmd=cmd,
+        cwd=Path("."),
+        log_path=run_dir / "commander.log",
+    )
 
 
 def run_once(
@@ -227,10 +427,21 @@ def run_once(
 
     sitl_log = logs_dir / "sitl.log"
     gz_log = logs_dir / "gazebo.log"
+    mavproxy_log = logs_dir / "mavproxy.log"
 
     if current.get("gz") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
+
         gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
         current["gz"] = gz
+
+    if current.get("mavproxy") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for MAVProxy to initialize...")
+
+        mavproxy = _popen("mavproxy", build_mavproxy_cmd(outport), cwd=logs_dir, log_path=mavproxy_log)
+        current["mavproxy"] = mavproxy
 
     time.sleep(startup_delay_s)
     print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
@@ -238,8 +449,51 @@ def run_once(
     sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
     current["sitl"] = sitl
 
-    # t0 = time.time()
-    # rc = 0
+    t0 = time.time()
+
+    while True:
+        # if user passed Ctrl+C, exit simulation immediately
+        if stop["flag"]:
+            rc = 130
+            break
+
+
+        if time.time() - t0 > max_run_s:
+            rc = 0
+            _finalize_proc(current.get("sitl"))
+            current["sitl"] = None
+            break
+
+    
+    while True:
+        # 1) user Ctrl+C
+        if stop["flag"]:
+            rc = 130
+            break
+
+        # 2) max runtime exceeded
+        if time.time() - t0 > max_run_s:
+            print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
+            rc = 124
+            break
+
+        # 3) commander finished
+        cmd_ph = current.get("commander")
+        if cmd_ph is not None:
+            cmd_rc = cmd_ph.proc.poll()
+            if cmd_rc is not None:
+                print(f"[INFO] commander finished with rc={cmd_rc}")
+                rc = cmd_rc
+                break
+
+        time.sleep(0.2)
+
+    rc = 0
+
+    #     time.sleep(0.2)
+
+    
+
 
     # while True:
     #     # NEW: if user pressed Ctrl+C, exit loop immediately
@@ -259,15 +513,13 @@ def run_once(
     #         rc = 0
     #         break
 
-    #     time.sleep(0.2)
 
     # # Cleanup (always)
     # _finalize_proc(current.get("gz"))
     # _finalize_proc(current.get("sitl"))
     # current["gz"] = None
-    # current["sitl"] = None
+    # 
 
-    rc = 0
 
     return rc
 
@@ -344,11 +596,11 @@ def main() -> int:
         stop["flag"] = True
         # immediately kill running processes (so ArduPilot doesn't linger)
         _finalize_proc(current.get("gz"))
-        _finalize_proc(current.get("mavconsole"))
+        _finalize_proc(current.get("mavproxy"))
         _finalize_proc(current.get("sitl"))
         current["gz"] = None
         current["sitl"] = None
-        current["mavconsole"] = None
+        current["mavproxy"] = None
 
     # Terminate on Ctrl+C or SIGTERM
     signal.signal(signal.SIGINT, _sig)
@@ -410,6 +662,12 @@ def main() -> int:
             world=cfg.world,
             location=cfg.location
         )
+
+    _finalize_proc(current.get("gz"))
+    current["gz"] = None
+    _finalize_proc(current.get("mavproxy"))
+    current["mavproxy"] = None
+
     return 0
 
 
