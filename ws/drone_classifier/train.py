@@ -1,0 +1,69 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from model import DroneTrajectoryCNN
+from dataset import get_dataloaders 
+
+PX4_FOLDER = "../../data/px4_logs"
+ARDU_FOLDER = "../../data/ardu_logs"
+
+BATCH_SIZE = 32
+LEARNING_RATE = 0.001
+NUM_EPOCHS = 30
+WINDOW_SIZE = 100
+STEP_SIZE = 50
+
+def main():
+    train_loader, test_loader = get_dataloaders(
+        px4_dir=PX4_FOLDER, 
+        ardu_dir=ARDU_FOLDER, 
+        batch_size=BATCH_SIZE, 
+        test_ratio=0.2,
+        window_size=WINDOW_SIZE,
+        step_size=STEP_SIZE
+    )
+
+    model = DroneTrajectoryCNN(num_features=7)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    for epoch in range(NUM_EPOCHS):        
+        model.train()
+        total_loss, correct, total = 0.0, 0, 0
+        
+        for batch_x, batch_y in train_loader:
+            optimizer.zero_grad()
+            outputs = model(batch_x)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total += batch_y.size(0)
+            correct += (predicted == batch_y).sum().item()
+            
+        train_acc = 100 * correct / total
+        avg_loss = total_loss / len(train_loader)
+        
+        model.eval()
+        test_correct, test_total = 0, 0
+        with torch.no_grad():
+            for batch_x, batch_y in test_loader:
+                outputs = model(batch_x)
+                _, predicted = torch.max(outputs.data, 1)
+                test_total += batch_y.size(0)
+                test_correct += (predicted == batch_y).sum().item()
+                
+        test_acc = 100 * test_correct / test_total
+        
+        print(f"Epoch [{epoch+1:02d}/{NUM_EPOCHS}] "
+              f"Loss: {avg_loss:.4f} | "
+              f"Train Accuracy: {train_acc:.1f}% | "
+              f"🏆 Test Accuracy: {test_acc:.1f}%")
+
+    torch.save(model.state_dict(), "drone_real_model.pth")
+    print("Weight saved to 'drone_real_model.pth'")
+
+if __name__ == "__main__":
+    main()

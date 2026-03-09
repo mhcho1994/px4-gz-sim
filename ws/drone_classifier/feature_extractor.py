@@ -25,6 +25,7 @@ def extract_from_ulog(ulog_path):
             np.mean(z), np.max(np.sqrt(vx**2 + vy**2 + vz**2))
         ])
         return features
+#need to fix later 
     except Exception as e:
         print(f"[Warning] {ulog_path} Parsing Failed: {e}")
         return None
