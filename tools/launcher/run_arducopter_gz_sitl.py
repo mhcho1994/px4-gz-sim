@@ -23,15 +23,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import shlex
 import signal
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from tracemalloc import stop
 from typing import Any, Optional, TextIO
 import yaml
 
+_THIS_FILE = Path(__file__).resolve()
+_TOOLS_DIR = _THIS_FILE.parents[1]          # .../tools
+_COMMANDER_DIR = _TOOLS_DIR / "commander"
+
+if str(_COMMANDER_DIR) not in sys.path:
+    sys.path.insert(0, str(_COMMANDER_DIR))
+
+# from mavsdk_ardupilot_commander import ArduPilotMissionRunner, MissionState
 
 @dataclass
 class ScenarioConfig:
@@ -395,19 +405,19 @@ def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
     return ["gz", "sim", verbose, "-r", world_sdf]
 
 
-def launch_commander(run_dir: Path, scenario_path: Path) -> ProcHandle:
-    cmd = [
-        "python3",
-        "tools/commander/mavsdk_ardupilot_commander.py",
-        "--scenario",
-        str(scenario_path),
-    ]
-    return launch_process(
-        name="commander",
-        cmd=cmd,
-        cwd=Path("."),
-        log_path=run_dir / "commander.log",
-    )
+# def build_launch_cmd(run_dir: Path, scenario_path: Path) -> ProcHandle:
+#     cmd = [
+#         "python3",
+#         "tools/commander/mavsdk_ardupilot_commander.py",
+#         "--scenario",
+#         str(scenario_path),
+#     ]
+#     return launch_process(
+#         name="commander",
+#         cmd=cmd,
+#         cwd=Path("."),
+#         log_path=run_dir / "commander.log",
+#     )
 
 
 def run_once(
@@ -429,6 +439,8 @@ def run_once(
     gz_log = logs_dir / "gazebo.log"
     mavproxy_log = logs_dir / "mavproxy.log"
 
+    # run_dir = logs_dir.parent
+
     if current.get("gz") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
@@ -449,77 +461,77 @@ def run_once(
     sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
     current["sitl"] = sitl
 
-    t0 = time.time()
+    runner = ArduPilotMissionRunner(scenario_path=run_dir / "scenario.yaml")
+    runner.start()
+
+    # t0 = time.time()
+    # rc = -1
 
     while True:
-        # if user passed Ctrl+C, exit simulation immediately
         if stop["flag"]:
+            print("[STOP] user interrupt")
+            runner.request_stop()
             rc = 130
             break
 
+    #     if time.time() - t0 > max_run_s:
+    #         print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
+    #         runner.request_stop()
+    #         rc = 124
+    #         break
 
-        if time.time() - t0 > max_run_s:
-            rc = 0
-            _finalize_proc(current.get("sitl"))
-            current["sitl"] = None
-            break
+    #     status = runner.get_status()
 
-    
-    while True:
-        # 1) user Ctrl+C
-        if stop["flag"]:
-            rc = 130
-            break
+    #     print(
+    #         f"[MISSION] state={status.state.name} "
+    #         f"done={status.done} success={status.success} "
+    #         f"msg={status.message}"
+    #     )
 
-        # 2) max runtime exceeded
-        if time.time() - t0 > max_run_s:
-            print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
-            rc = 124
-            break
+    #     if status.done:
+    #         if status.success:
+    #             rc = 0
+    #         else:
+    #             rc = 1
+    #             print(f"[MISSION] error: {status.error}")
+    #         break
 
-        # 3) commander finished
-        cmd_ph = current.get("commander")
-        if cmd_ph is not None:
-            cmd_rc = cmd_ph.proc.poll()
-            if cmd_rc is not None:
-                print(f"[INFO] commander finished with rc={cmd_rc}")
-                rc = cmd_rc
-                break
+    #     time.sleep(0.5)
 
-        time.sleep(0.2)
+    #     runner.join(timeout=2.0)
 
-    rc = 0
+    #     _finalize_proc(current.get("sitl"))
+    #     current["sitl"] = None
 
-    #     time.sleep(0.2)
-
-    
-
+    # t0 = time.time()
 
     # while True:
-    #     # NEW: if user pressed Ctrl+C, exit loop immediately
+    #     # 1) user Ctrl+C
     #     if stop["flag"]:
     #         rc = 130
     #         break
 
-    #     if sitl.proc.poll() is not None:
-    #         rc = sitl.proc.returncode or 0
-    #         break
-
-    #     if gz.proc.poll() is not None:
-    #         rc = gz.proc.returncode or 0
-    #         break
-
+    #     # 2) max runtime exceeded
     #     if time.time() - t0 > max_run_s:
-    #         rc = 0
+    #         print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
+    #         rc = 124
     #         break
 
+    #     # 3) commander finished
+    #     cmd_ph = current.get("commander")
+    #     if cmd_ph is not None:
+    #         cmd_rc = cmd_ph.proc.poll()
+    #         if cmd_rc is not None:
+    #             print(f"[INFO] commander finished with rc={cmd_rc}")
+    #             rc = cmd_rc
+    #             break
 
-    # # Cleanup (always)
-    # _finalize_proc(current.get("gz"))
-    # _finalize_proc(current.get("sitl"))
-    # current["gz"] = None
-    # 
+    #     time.sleep(0.2)
 
+    #     _finalize_proc(current.get("sitl"))
+    #     current["sitl"] = None
+
+    rc = 0
 
     return rc
 
@@ -589,7 +601,7 @@ def main() -> int:
     data_root = args.run_root.resolve()
 
     stop = {"flag": False}
-    current: dict[str, Optional["ProcHandle"]] = {"sitl": None, "gz": None}  
+    current: dict[str, Optional["ProcHandle"]] = {"gz": None, "mavproxy": None, "sitl": None, "commander": None}  
 
     # Mark stop flag and terminate running processes on SIGINT/SIGTERM
     def _sig(_signum, _frame):
@@ -598,9 +610,11 @@ def main() -> int:
         _finalize_proc(current.get("gz"))
         _finalize_proc(current.get("mavproxy"))
         _finalize_proc(current.get("sitl"))
+        # _finalize_proc(current.get("commander"))
         current["gz"] = None
-        current["sitl"] = None
         current["mavproxy"] = None
+        current["sitl"] = None
+        # current["commander"] = None
 
     # Terminate on Ctrl+C or SIGTERM
     signal.signal(signal.SIGINT, _sig)

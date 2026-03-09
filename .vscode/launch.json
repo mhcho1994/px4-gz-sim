@@ -11,7 +11,7 @@
         "--run-root", "./data",
         "--outport", "14550",
         "--startup-delay", "2",
-        "--max-run-s", "180"
+        "--max-run-s", "30"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

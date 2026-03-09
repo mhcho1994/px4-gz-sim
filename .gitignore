@@ -8,3 +8,4 @@
 eeprom.bin
 mav.tlog
 mav.tlog.*
+__pycache__/
