@@ -15,7 +15,7 @@ def load_dataset():
     X = []
     y = []
     
-    print("PX4 데이터를 불러옵니다...")
+    print("Loading PX4 Data...")
     if os.path.exists(PX4_BASE_DIR):
         for file in os.listdir(PX4_BASE_DIR):
             if file.endswith('.ulg'):
@@ -24,7 +24,7 @@ def load_dataset():
                     X.append(feat)
                     y.append(0)  # PX4 = 0
                     
-    print("ArduPilot 데이터를 불러옵니다...")
+    print("Loading ArduPilot Data...")
     if os.path.exists(ARDU_DIR):
         for file in os.listdir(ARDU_DIR):
             if file.endswith('.BIN'):
@@ -39,11 +39,11 @@ def main():
     X, y = load_dataset()
     
     if len(X) < 5:
-        print("\n데이터가 너무 적습니다! 폴더에 로그 파일이 있는지 확인하세요.")
+        print("\nToo few data points, Check your directory.")
         return
     
     unique_classes, counts = np.unique(y, return_counts=True)
-    print(f"\n[데이터 로드 결과] 발견된 클래스: {unique_classes}, 각 데이터 개수: {counts}")
+    print(f"\nFound Class: {unique_classes}, Each number of Data: {counts}")
 
     # 학습용 / 테스트용 데이터 분리
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -54,14 +54,14 @@ def main():
     X_test_scaled = scaler.transform(X_test)
     
     # SVM 모델 선언 및 학습
-    print("\nSVM 모델을 학습합니다...")
+    print("\nLearning SVM Model...")
     model = SVC(kernel='rbf', C=1.0, gamma='scale')
     model.fit(X_train_scaled, y_train)
     
     # 평가
     y_pred = model.predict(X_test_scaled)
-    print("\n================ 분류 결과 ================")
-    print(f"정확도: {accuracy_score(y_test, y_pred) * 100:.2f}%")
+    print("\n================ Classified Result ================")
+    print(f"Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%")
     print(classification_report(y_test, y_pred, target_names=['PX4', 'ArduPilot']))
 
 if __name__ == "__main__":

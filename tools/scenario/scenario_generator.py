@@ -463,7 +463,7 @@ def main() -> int:
     )
 
     # Output settings
-    ap.add_argument("--outdir", type=Path, default=Path("./data"))
+    ap.add_argument("--outdir", type=Path, default=Path("../launcher/data"))
     ap.add_argument("--runs", type=int, default=1)
 
     # Mission pattern selection
@@ -509,7 +509,7 @@ def main() -> int:
     ap.add_argument(
         "--px4-dir",
         type=str,
-        default="/home/mhcho/ws/flightstack_sim/ap/px4/PX4-Autopilot"
+        default="../flightstack_sim/ap/px4/PX4-Autopilot"
     )
     ap.add_argument("--px4-world", type=str, default="windy")
 

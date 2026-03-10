@@ -44,22 +44,39 @@ if str(_COMMANDER_DIR) not in sys.path:
 # from mavsdk_ardupilot_commander import ArduPilotMissionRunner, MissionState
 
 @dataclass
+# class ScenarioConfig:
+#     # sim instance parameters
+#     instance: int = 0
+#     outport: int = 14550
+#     startup_delay_s: float = 0.0
+#     max_run_s: float = 60.0
+#     firmware: str = "ardupilot"
+
+#     # sim setup
+#     vehicle: str = "ArduCopter"
+#     frame: str = "gazebo-iris"
+#     model: str = "JSON"
+#     world: str = "iris_runway"
+#     location: str = "Purdue"
+    # scenario_name: str = "turn3pts"
+
+@dataclass
 class ScenarioConfig:
     # sim instance parameters
+    firmware: str = "px4"
     instance: int = 0
-    outport: int = 14550
+    outport: int = 14650
     startup_delay_s: float = 0.0
     max_run_s: float = 60.0
 
     # sim setup
-    vehicle: str = "ArduCopter"
-    frame: str = "gazebo-iris"
+    vehicle: str = "gz_x500"
+    frame: str = "default"
     model: str = "JSON"
-    world: str = "iris_runway"
+    world: str = "default"
     location: str = "Purdue"
     scenario_name: str = "turn3pts"
-
-
+    px4_dir: Optional[str] = None
 @dataclass
 class ProcHandle:
     """Container holding a running process and its log file info."""
@@ -354,27 +371,50 @@ def _finalize_proc(ph: Optional[ProcHandle]) -> None:
     except Exception:
         pass
 
-
-def build_sitl_cmd(instance: int, out_port: int, location: str) -> list[str]:
+def build_sitl_cmd(
+    firmware: str, 
+    instance: int, 
+    out_port: int, 
+    location: str, 
+    px4_dir: Path = None
+) -> list[str]:
     """
-    Build the sim_vehicle.py command for ArduCopter SITL.
-
-    Notes:
-      - `-I <instance>` helps separate multiple runs (some paths/ports are derived).
-      - `--out=udp:127.0.0.1:<port>` is useful if you want to connect QGC/MAVSDK.
-      - `--no-rebuild` makes repeated runs faster.
-      TODO: adding the following options
-        "-I", str(instance),
-        "--no-rebuild",
+    Universal command generator for UAV SITL.
+    Supports 'px4' and 'ardupilot'.
     """
-    return [
-        "sim_vehicle.py",
-        "-v", "ArduCopter",
-        "-f", "gazebo-iris",
-        "--model", "JSON",
-        f"--location={location}",
-        f"--out=udp:127.0.0.1:{out_port}",
-    ]
+    
+    if firmware.lower() == "ardupilot":
+        # ArduPilot uses sim_vehicle.py
+        return [
+            "sim_vehicle.py",
+            "-v", "ArduCopter",
+            "-f", "gazebo-iris",
+            "--model", "JSON",
+            f"-I{instance}",
+            f"--location={location}",
+            f"--out=udp:127.0.0.1:{out_port}",
+        ]
+        
+    elif firmware.lower() == "px4":
+        # PX4 uses the px4 binary directly or 'make'
+        # Example using the binary path you provided
+        if px4_dir is None:
+            raise ValueError("px4_dir must be provided for PX4 firmware")
+        
+        px4_bin = px4_dir / "build/px4_sitl_default/bin/px4"
+        
+        # PX4 command structure (simplified example)
+        # Note: PX4 usually handles instances/ports via environment variables or startup scripts
+        return [
+            str(px4_bin),
+            str(px4_dir / "ROMFS/px4fmu_common"), # Rootfs path
+            "-s", "etc/init.d-posix/rcS",         # Startup script
+            "-i", str(instance),                  # Instance ID
+            "-d"                                  # Daemon mode
+        ]
+    
+    else:
+        raise ValueError(f"Unsupported firmware: {firmware}")
 
 
 def build_mavproxy_cmd(out_port: int) -> list[str]:
@@ -397,10 +437,43 @@ def build_mavproxy_cmd(out_port: int) -> list[str]:
 def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
     """
     Build the Gazebo Sim command.
-
+    
+    Handles both absolute and relative world paths:
+    - If world_sdf is absolute, use as-is
+    - If relative, search common Gazebo paths
+    
     Example:
       gz sim -v4 -r iris_runway.sdf
+      gz sim -v4 -r /path/to/iris_runway.sdf
     """
+    world_path = Path(world_sdf)
+    
+    # If already absolute and exists, use it
+    if world_path.is_absolute() and world_path.exists():
+        return ["gz", "sim", verbose, "-r", str(world_path)]
+    
+    # If relative, search in common locations
+    if not world_path.is_absolute():
+        # Common search paths from workspace root
+        search_paths = [
+            # ArduPilot Gazebo worlds
+            Path("../gz/ardupilot_gazebo/worlds") / world_sdf,
+            Path("../../gz/ardupilot_gazebo/worlds") / world_sdf,
+            Path("../../../../gz/ardupilot_gazebo/worlds") / world_sdf,
+            Path(_THIS_FILE).parents[2] / "gz" / "ardupilot_gazebo" / "worlds" / world_sdf,
+            
+            # PX4 Gazebo worlds
+            Path("../ap/px4/Tools/simulation/gz/worlds") / world_sdf,
+            Path("../../ap/px4/Tools/simulation/gz/worlds") / world_sdf,
+            Path("../../../../ap/px4/Tools/simulation/gz/worlds") / world_sdf,
+            Path(_THIS_FILE).parents[2] / "ap" / "px4" / "Tools" / "simulation" / "gz" / "worlds" / world_sdf,
+        ]
+        
+        for search_path in search_paths:
+            if search_path.exists():
+                return ["gz", "sim", verbose, "-r", str(search_path.resolve())]
+    
+    # If not found, try passing as-is (Gazebo might find it in its resource paths)
     return ["gz", "sim", verbose, "-r", world_sdf]
 
 
@@ -420,6 +493,7 @@ def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
 
 
 def run_once(
+    firmware: str,
     instance: int,
     logs_dir: Path,
     outport: int,
@@ -432,6 +506,7 @@ def run_once(
     model: str, 
     world: str,
     location: str,
+    px4_dir: Optional[Path] = None,
 ) -> int:
 
     sitl_log = logs_dir / "sitl.log"
@@ -457,7 +532,7 @@ def run_once(
     time.sleep(startup_delay_s)
     print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
 
-    sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
+    sitl = _popen("sitl", build_sitl_cmd(firmware, instance, outport, location, px4_dir=px4_dir), cwd=logs_dir, log_path=sitl_log)
     current["sitl"] = sitl
 
     # runner = ArduPilotMissionRunner(scenario_path=run_dir / "scenario.yaml")
@@ -550,18 +625,29 @@ def _load_scenario_yaml(run_dir: Path) -> ScenarioConfig:
 
     data: dict[str, Any] = yaml.safe_load(scenario_path.read_text(encoding="utf-8")) or {}
 
-    # Accept both top-level keys and nested (e.g., {"sim": {...}})
-    # You can extend this mapping if your scenario.yaml has a different schema.
-    sim = data.get("autopilots",{}).get("ardupilot",{}).get("sim",{})
-    scenario = data.get("common",{}).get("scenario",{})
+    # Determine which autopilot section to read from
+    autopilots_data = data.get("autopilots", {})
+    
+    # Check if px4 config exists, otherwise fall back to ardupilot
+    if "px4" in autopilots_data:
+        sim = autopilots_data.get("px4", {}).get("sim", {})
+        firmware = "px4"
+    else:
+        sim = autopilots_data.get("ardupilot", {}).get("sim", {})
+        firmware = "ardupilot"
+    
+    scenario = data.get("common", {}).get("scenario", {})
+    
     cfg = ScenarioConfig(
+        firmware=firmware,
         instance=int(sim.get("instance", ScenarioConfig.instance)),
         vehicle=str(sim.get("vehicle", ScenarioConfig.vehicle)),
         frame=str(sim.get("frame", ScenarioConfig.frame)),
         model=str(sim.get("model", ScenarioConfig.model)),
         world=str(sim.get("world", ScenarioConfig.world)),
         location=str(sim.get("location", ScenarioConfig.location)),
-        scenario_name=str(scenario.get("name", ScenarioConfig.scenario_name))
+        scenario_name=str(scenario.get("name", ScenarioConfig.scenario_name)),
+        px4_dir=sim.get("px4_dir", None)
     )
     return cfg
 
@@ -662,6 +748,7 @@ def main() -> int:
         # Execute the scenario
         print(f"\n--- {run_dir.name}: RUN {cfg.scenario_name} Scenario ---")
         rc = run_once(
+            firmware=cfg.firmware,
             instance=cfg.instance,
             logs_dir=logs_root,
             outport=cfg.outport,
