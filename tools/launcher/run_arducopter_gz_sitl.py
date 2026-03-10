@@ -207,7 +207,6 @@ def _cleanup_mavproxy_processes() -> None:
         r"mavproxy",
     ]
 
-    # Graceful termination first
     _pkill_patterns(patterns, "INT")
 
 
@@ -461,8 +460,8 @@ def run_once(
     sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
     current["sitl"] = sitl
 
-    runner = ArduPilotMissionRunner(scenario_path=run_dir / "scenario.yaml")
-    runner.start()
+    # runner = ArduPilotMissionRunner(scenario_path=run_dir / "scenario.yaml")
+    # runner.start()
 
     # t0 = time.time()
     # rc = -1
@@ -470,7 +469,7 @@ def run_once(
     while True:
         if stop["flag"]:
             print("[STOP] user interrupt")
-            runner.request_stop()
+            # runner.request_stop()
             rc = 130
             break
 
