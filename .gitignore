@@ -3,7 +3,6 @@
 /gz
 /tools/QGC
 /venv
-/data
 !.gitignore
 eeprom.bin
 mav.tlog
