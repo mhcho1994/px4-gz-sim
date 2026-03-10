@@ -6,7 +6,7 @@ import random
 from signal_processor import process_px4_ulog, process_ardu_bin
 
 class DroneTrajectoryDataset(Dataset):
-    def __init__(self, data_list, labels_list, window_size=100, step_size=50):
+    def __init__(self, data_list, labels_list, window_size, step_size):
         self.windows = []
         self.labels = []
         
@@ -47,7 +47,7 @@ def extract_flight_signatures(file_list):
             
     return data_list, labels_list
 
-def get_dataloaders(px4_dir, ardu_dir, batch_size=32, test_ratio=0.2, window_size=100, step_size=50):
+def build_training_pipeline(px4_dir, ardu_dir, batch_size, test_ratio, window_size, step_size):
     px4_files = list(Path(px4_dir).glob("*.ulg"))
     ardu_files = list(Path(ardu_dir).glob("*.bin"))
     

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from model import DroneTrajectoryCNN
-from dataset import get_dataloaders 
+from dataset import build_training_pipeline 
 
 PX4_FOLDER = "../../data/px4_logs"
 ARDU_FOLDER = "../../data/ardu_logs"
@@ -14,7 +14,7 @@ WINDOW_SIZE = 100
 STEP_SIZE = 50
 
 def main():
-    train_loader, test_loader = get_dataloaders(
+    train_loader, test_loader = build_training_pipeline(
         px4_dir=PX4_FOLDER, 
         ardu_dir=ARDU_FOLDER, 
         batch_size=BATCH_SIZE, 
