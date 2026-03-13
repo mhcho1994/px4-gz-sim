@@ -9,6 +9,7 @@
       "program": "${workspaceFolder}/tools/launcher/run_arducopter_gz_sitl.py",
       "args": [
         "--run-root", "./data",
+        "--force",
         "--outport", "14550",
         "--startup-delay", "2",
         "--max-run-s", "30"
@@ -37,11 +38,12 @@
       }
     },
     {
-      "name": "Debug: mavsdk_ardu_square",
+      "name": "Debug: mavsdk_ardupilot_commander",
       "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/tools/commander/mavsdk_ardu_square.py",
+      "program": "${workspaceFolder}/tools/commander/mavsdk_ardupilot_commander.py",
       "args": [
+        "--scenario", "./data/run_000/scenario.yaml"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

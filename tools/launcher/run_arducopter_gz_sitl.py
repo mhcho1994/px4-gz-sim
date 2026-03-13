@@ -41,10 +41,11 @@ _COMMANDER_DIR = _TOOLS_DIR / "commander"
 if str(_COMMANDER_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMANDER_DIR))
 
-# from mavsdk_ardupilot_commander import ArduPilotMissionRunner, MissionState
+from mavsdk_ardupilot_commander import ArduPilotMissionRunner, MissionState, MissionStatus
+print("Imported ArduPilotMissionRunner OK")
 
 @dataclass
-class ScenarioConfig:
+class ArdupilotScenarioConfig:
     # sim instance parameters
     instance: int = 0
     outport: int = 14550
@@ -167,6 +168,7 @@ def _cleanup_gz_processes() -> None:
     # Graceful termination first
     _pkill_patterns(patterns, "INT")
 
+
 def _cleanup_sitl_processes() -> None:
     """Best-effort cleanup for common ArduPilot SITL related processes."""
     if os.name == "nt":
@@ -262,7 +264,6 @@ def _cleanup_mavproxy_processes() -> None:
     #                 ph.proc.kill()
     #         except Exception:
     #             pass
-
 
 
 def _kill_tree(ph: ProcHandle, grace_s: float = 5.0) -> None:
@@ -421,6 +422,7 @@ def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
 
 def run_once(
     instance: int,
+    scenario_path: Path,
     logs_dir: Path,
     outport: int,
     startup_delay_s: float,
@@ -438,48 +440,50 @@ def run_once(
     gz_log = logs_dir / "gazebo.log"
     mavproxy_log = logs_dir / "mavproxy.log"
 
-    # run_dir = logs_dir.parent
+    # if current.get("gz") is None:
+    #     time.sleep(startup_delay_s)
+    #     print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
 
-    if current.get("gz") is None:
-        time.sleep(startup_delay_s)
-        print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
+    #     gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
+    #     current["gz"] = gz
 
-        gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
-        current["gz"] = gz
+    # if current.get("mavproxy") is None:
+    #     time.sleep(startup_delay_s)
+    #     print(f"[INFO] Waiting {startup_delay_s:.1f}s for MAVProxy to initialize...")
 
-    if current.get("mavproxy") is None:
-        time.sleep(startup_delay_s)
-        print(f"[INFO] Waiting {startup_delay_s:.1f}s for MAVProxy to initialize...")
+    #     mavproxy = _popen("mavproxy", build_mavproxy_cmd(outport), cwd=logs_dir, log_path=mavproxy_log)
+    #     current["mavproxy"] = mavproxy
 
-        mavproxy = _popen("mavproxy", build_mavproxy_cmd(outport), cwd=logs_dir, log_path=mavproxy_log)
-        current["mavproxy"] = mavproxy
+    # time.sleep(startup_delay_s)
+    # print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
 
-    time.sleep(startup_delay_s)
-    print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
+    # sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
+    # current["sitl"] = sitl
 
-    sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
-    current["sitl"] = sitl
+    runner = ArduPilotMissionRunner(scenario_path=scenario_path)
+    runner.start()
 
-    # runner = ArduPilotMissionRunner(scenario_path=run_dir / "scenario.yaml")
-    # runner.start()
+    t0 = time.time()
 
-    # t0 = time.time()
-    # rc = -1
+    runner._run()
 
     while True:
+        # 1) user Ctrl+C
         if stop["flag"]:
             print("[STOP] user interrupt")
             # runner.request_stop()
             rc = 130
             break
+        
+        # 2) max runtime exceeded
+        if time.time() - t0 > max_run_s:
+            print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
+            # runner.request_stop()
+            rc = 124
+            break
 
-    #     if time.time() - t0 > max_run_s:
-    #         print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
-    #         runner.request_stop()
-    #         rc = 124
-    #         break
-
-    #     status = runner.get_status()
+        # 3) commander finished
+        status = runner.get_status()
 
     #     print(
     #         f"[MISSION] state={status.state.name} "
@@ -504,18 +508,6 @@ def run_once(
 
     # t0 = time.time()
 
-    # while True:
-    #     # 1) user Ctrl+C
-    #     if stop["flag"]:
-    #         rc = 130
-    #         break
-
-    #     # 2) max runtime exceeded
-    #     if time.time() - t0 > max_run_s:
-    #         print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
-    #         rc = 124
-    #         break
-
     #     # 3) commander finished
     #     cmd_ph = current.get("commander")
     #     if cmd_ph is not None:
@@ -535,12 +527,15 @@ def run_once(
     return rc
 
 
-def _load_scenario_yaml(run_dir: Path) -> ScenarioConfig:
+def _load_scenario_yaml_ardupilot(run_dir: Path) -> ArdupilotScenarioConfig:
     """
-    Load scenario.yaml from run_dir.
+    Load scenario.yaml from run_dir and extract ArduPilot-specific configuration.
 
-    Supported keys (example):
-      instance_base: 0
+    Supported keys in scenario.yaml:
+      instance: 0
+      vehicle: ArduCopter
+      frame: gazebo-iris
+      model: JSON
       world: iris_runway.sdf
       location: Purdue
     """
@@ -554,14 +549,14 @@ def _load_scenario_yaml(run_dir: Path) -> ScenarioConfig:
     # You can extend this mapping if your scenario.yaml has a different schema.
     sim = data.get("autopilots",{}).get("ardupilot",{}).get("sim",{})
     scenario = data.get("common",{}).get("scenario",{})
-    cfg = ScenarioConfig(
-        instance=int(sim.get("instance", ScenarioConfig.instance)),
-        vehicle=str(sim.get("vehicle", ScenarioConfig.vehicle)),
-        frame=str(sim.get("frame", ScenarioConfig.frame)),
-        model=str(sim.get("model", ScenarioConfig.model)),
-        world=str(sim.get("world", ScenarioConfig.world)),
-        location=str(sim.get("location", ScenarioConfig.location)),
-        scenario_name=str(scenario.get("name", ScenarioConfig.scenario_name))
+    cfg = ArdupilotScenarioConfig(
+        instance=int(sim.get("instance", ArdupilotScenarioConfig.instance)),
+        vehicle=str(sim.get("vehicle", ArdupilotScenarioConfig.vehicle)),
+        frame=str(sim.get("frame", ArdupilotScenarioConfig.frame)),
+        model=str(sim.get("model", ArdupilotScenarioConfig.model)),
+        world=str(sim.get("world", ArdupilotScenarioConfig.world)),
+        location=str(sim.get("location", ArdupilotScenarioConfig.location)),
+        scenario_name=str(scenario.get("name", ArdupilotScenarioConfig.scenario_name))
     )
     return cfg
 
@@ -609,11 +604,11 @@ def main() -> int:
         _finalize_proc(current.get("gz"))
         _finalize_proc(current.get("mavproxy"))
         _finalize_proc(current.get("sitl"))
-        # _finalize_proc(current.get("commander"))
+        _finalize_proc(current.get("commander"))
         current["gz"] = None
         current["mavproxy"] = None
         current["sitl"] = None
-        # current["commander"] = None
+        current["commander"] = None
 
     # Terminate on Ctrl+C or SIGTERM
     signal.signal(signal.SIGINT, _sig)
@@ -638,7 +633,7 @@ def main() -> int:
 
         # Load scenario.yaml
         try:
-            cfg = _load_scenario_yaml(run_dir)
+            cfgArdupilot = _load_scenario_yaml_ardupilot(run_dir)
         except Exception as e:
             print(f"[ERROR] {run_dir}: failed to load scenario.yaml: {e}")
             overall_rc = 2
@@ -648,32 +643,36 @@ def main() -> int:
         logs_root = run_dir / "ardu_logs"
         logs_root.mkdir(parents=True, exist_ok=True)
 
+        # Get scenario path
+        scenario_path = run_dir / "scenario.yaml"
+
         # Set other configurations
-        cfg.outport = args.outport
-        cfg.startup_delay_s = args.startup_delay_s
-        cfg.max_run_s = args.max_run_s
+        cfgArdupilot.outport = args.outport
+        cfgArdupilot.startup_delay_s = args.startup_delay_s
+        cfgArdupilot.max_run_s = args.max_run_s
 
         print(f"\n=== SCENARIO: {run_dir.name} ===")
-        print(f"  world={cfg.world} location={cfg.location}")
-        print(f"  instance={cfg.instance} outport={cfg.outport}")
-        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s}")
-        print(f"  logs_root={logs_root}")
+        print(f"  world={cfgArdupilot.world} location={cfgArdupilot.location}")
+        print(f"  instance={cfgArdupilot.instance} outport={cfgArdupilot.outport}")
+        print(f"  startup_delay={cfgArdupilot.startup_delay_s} max_run_s={cfgArdupilot.max_run_s}")
+        print(f"  logs_root={logs_root} scenario_path={scenario_path}")
 
         # Execute the scenario
-        print(f"\n--- {run_dir.name}: RUN {cfg.scenario_name} Scenario ---")
+        print(f"\n--- {run_dir.name}: RUN {cfgArdupilot.scenario_name} Scenario ---")
         rc = run_once(
-            instance=cfg.instance,
+            instance=cfgArdupilot.instance,
+            scenario_path=scenario_path,
             logs_dir=logs_root,
-            outport=cfg.outport,
-            startup_delay_s=cfg.startup_delay_s,
-            max_run_s=cfg.max_run_s,
+            outport=cfgArdupilot.outport,
+            startup_delay_s=cfgArdupilot.startup_delay_s,
+            max_run_s=cfgArdupilot.max_run_s,
             stop=stop,
             current=current,
-            vehicle=cfg.vehicle,
-            frame=cfg.frame,
-            model=cfg.model,
-            world=cfg.world,
-            location=cfg.location
+            vehicle=cfgArdupilot.vehicle,
+            frame=cfgArdupilot.frame,
+            model=cfgArdupilot.model,
+            world=cfgArdupilot.world,
+            location=cfgArdupilot.location
         )
 
     _finalize_proc(current.get("gz"))
@@ -681,7 +680,7 @@ def main() -> int:
     _finalize_proc(current.get("mavproxy"))
     current["mavproxy"] = None
 
-    return 0
+    return overall_rc
 
 
 if __name__ == "__main__":
