@@ -41,8 +41,8 @@ _COMMANDER_DIR = _TOOLS_DIR / "commander"
 if str(_COMMANDER_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMANDER_DIR))
 
-from mavsdk_ardupilot_commander import ArduPilotMissionRunner, MissionState, MissionStatus
-print("Imported ArduPilotMissionRunner OK")
+from mavlink_ardupilot_commander import ArduPilotMissionRunner, MissionState, MissionStatus
+print("[LOADING] Import ArduPilotMissionRunner")
 
 @dataclass
 class ArdupilotScenarioConfig:
@@ -419,6 +419,17 @@ def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
 #         log_path=run_dir / "commander.log",
 #     )
 
+def _finalize_runner(runner, timeout: float = 2.0) -> None:
+    """
+    Best-effort shutdown for a mission runner thread.
+    """
+    if runner is None:
+        return
+
+    try:
+        runner.request_stop()
+    except Exception:
+        pass
 
 def run_once(
     instance: int,
@@ -440,90 +451,77 @@ def run_once(
     gz_log = logs_dir / "gazebo.log"
     mavproxy_log = logs_dir / "mavproxy.log"
 
-    # if current.get("gz") is None:
-    #     time.sleep(startup_delay_s)
-    #     print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
+    if current.get("gz") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
 
-    #     gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
-    #     current["gz"] = gz
+        gz = _popen("gazebo", build_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
+        current["gz"] = gz
 
-    # if current.get("mavproxy") is None:
-    #     time.sleep(startup_delay_s)
-    #     print(f"[INFO] Waiting {startup_delay_s:.1f}s for MAVProxy to initialize...")
+    if current.get("mavproxy") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for MAVProxy to initialize...")
 
-    #     mavproxy = _popen("mavproxy", build_mavproxy_cmd(outport), cwd=logs_dir, log_path=mavproxy_log)
-    #     current["mavproxy"] = mavproxy
+        mavproxy = _popen("mavproxy", build_mavproxy_cmd(outport), cwd=logs_dir, log_path=mavproxy_log)
+        current["mavproxy"] = mavproxy
 
-    # time.sleep(startup_delay_s)
-    # print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
+    if current.get("sitl") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
 
-    # sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
-    # current["sitl"] = sitl
+        sitl = _popen("sitl", build_sitl_cmd(instance, outport, location), cwd=logs_dir, log_path=sitl_log)
+        current["sitl"] = sitl
 
     runner = ArduPilotMissionRunner(scenario_path=scenario_path)
     runner.start()
 
     t0 = time.time()
 
-    runner._run()
-
     while True:
         # 1) user Ctrl+C
         if stop["flag"]:
             print("[STOP] user interrupt")
-            # runner.request_stop()
+            _finalize_runner(runner)
             rc = 130
             break
         
         # 2) max runtime exceeded
         if time.time() - t0 > max_run_s:
             print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
-            # runner.request_stop()
+            _finalize_runner(runner)
             rc = 124
             break
 
         # 3) commander finished
         status = runner.get_status()
 
-    #     print(
-    #         f"[MISSION] state={status.state.name} "
-    #         f"done={status.done} success={status.success} "
-    #         f"msg={status.message}"
-    #     )
+        print(
+            f"[RUNNER] state={status.state.name} "
+            f"done={status.done} success={status.success} "
+            f"msg={status.message}"
+        )
+            
+        if runner.is_done():
+            if status.success:
+                rc = 0
+                _finalize_runner(runner)
+                print(f"[RUNNER] normally terminated")
+            else:
+                rc = 1
+                _finalize_runner(runner)
+                print(f"[RUNNER] error: {status.error}")
+            break
 
-    #     if status.done:
-    #         if status.success:
-    #             rc = 0
-    #         else:
-    #             rc = 1
-    #             print(f"[MISSION] error: {status.error}")
-    #         break
+        time.sleep(1.0)
 
-    #     time.sleep(0.5)
+    _finalize_proc(current.get("sitl"))
+    current["sitl"] = None
+    _finalize_proc(current.get("gz"))
+    current["gz"] = None
 
-    #     runner.join(timeout=2.0)
-
-    #     _finalize_proc(current.get("sitl"))
-    #     current["sitl"] = None
-
-    # t0 = time.time()
-
-    #     # 3) commander finished
-    #     cmd_ph = current.get("commander")
-    #     if cmd_ph is not None:
-    #         cmd_rc = cmd_ph.proc.poll()
-    #         if cmd_rc is not None:
-    #             print(f"[INFO] commander finished with rc={cmd_rc}")
-    #             rc = cmd_rc
-    #             break
-
-    #     time.sleep(0.2)
-
-    #     _finalize_proc(current.get("sitl"))
-    #     current["sitl"] = None
-
+    print('[HIT] move to next iteration')
     rc = 0
-
+    
     return rc
 
 
@@ -622,7 +620,7 @@ def main() -> int:
     
     overall_rc = 0
 
-    for run_dir in run_dirs:
+    for run_dir in run_dirs[0:2]:
         if stop["flag"]:
             print("Interrupted. Exiting.")
             return 130
@@ -651,14 +649,14 @@ def main() -> int:
         cfgArdupilot.startup_delay_s = args.startup_delay_s
         cfgArdupilot.max_run_s = args.max_run_s
 
-        print(f"\n=== SCENARIO: {run_dir.name} ===")
+        # print(f"\n=== SCENARIO: {run_dir.name} ===")
+        print(f"\n---- {run_dir.name}: RUN {cfgArdupilot.scenario_name} Scenario ----")
         print(f"  world={cfgArdupilot.world} location={cfgArdupilot.location}")
         print(f"  instance={cfgArdupilot.instance} outport={cfgArdupilot.outport}")
         print(f"  startup_delay={cfgArdupilot.startup_delay_s} max_run_s={cfgArdupilot.max_run_s}")
         print(f"  logs_root={logs_root} scenario_path={scenario_path}")
 
         # Execute the scenario
-        print(f"\n--- {run_dir.name}: RUN {cfgArdupilot.scenario_name} Scenario ---")
         rc = run_once(
             instance=cfgArdupilot.instance,
             scenario_path=scenario_path,
@@ -675,8 +673,8 @@ def main() -> int:
             location=cfgArdupilot.location
         )
 
-    _finalize_proc(current.get("gz"))
-    current["gz"] = None
+        overall_rc = max(overall_rc, 1 if rc != 0 else 0)
+
     _finalize_proc(current.get("mavproxy"))
     current["mavproxy"] = None
 
