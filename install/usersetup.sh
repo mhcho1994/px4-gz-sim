@@ -23,7 +23,8 @@
 # --------------------------
 DEBUG="false"
 ROS_VERSION="humble"
-PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$THIS_DIR/.." && pwd)"
 
 help() {
   cat <<EOF
@@ -133,9 +134,6 @@ if [ -f "\${ARDUPILOT_GZ_ENV}" ]; then
   source "\${ARDUPILOT_GZ_ENV}"
 fi
 
-EOF
-
-cat << EOF >> "${tmpfile}"
 # --------------------------
 # ArduPilot environment
 #  - Ensure user-local bin is on PATH (MAVProxy, pip tools)
@@ -162,33 +160,29 @@ fi
 # flightstack_sim paths
 # --------------------------
 export FLIGHTSTACK_SIM_ROOT="${PROJECT_ROOT}"
-# export FLIGHTSTACK_SIM_AP="\${FLIGHTSTACK_SIM_ROOT}/ap"
-# export FLIGHTSTACK_SIM_GZ="\${FLIGHTSTACK_SIM_ROOT}/gz"
-# export FLIGHTSTACK_SIM_ROS="\${FLIGHTSTACK_SIM_ROOT}/ros"
+export FLIGHTSTACK_SIM_AP="\${FLIGHTSTACK_SIM_ROOT}/ap"
+export FLIGHTSTACK_SIM_GZ="\${FLIGHTSTACK_SIM_ROOT}/gz"
+export FLIGHTSTACK_SIM_ROS="\${FLIGHTSTACK_SIM_ROOT}/ros2"
 
 # --------------------------
 # Overlay order (optional, source only if exists)
 #   1) Gazebo (source-built) overlay
 #   2) ros_gz overlay (if you build ros_gz from source)
 #   3) px4_msgs_ws overlay (if you build px4_msgs in its own ws)
-#   4) your sim workspace overlay
+#   4) Micro XRCE-DDS Agent for ROS 2 workspace build
 # --------------------------
-# [ -f "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash"
-# [ -f "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash"
-# [ -f "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash"
-# [ -f "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/sim_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_GZ}/harmonic_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/ros_gz_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws/install/setup.bash"
+[ -f "\${FLIGHTSTACK_SIM_ROS}/px4_ros_uxrce_dds_ws/install/setup.bash" ] && source "\${FLIGHTSTACK_SIM_ROS}/px4_ros_uxrce_dds_ws/install/setup.bash"
 
 # --------------------------
 # Convenience aliases (optional)
 # --------------------------
-# alias fsroot='cd "\${FLIGHTSTACK_SIM_ROOT}"'
-# alias fsap='cd "\${FLIGHTSTACK_SIM_AP}"'
-# alias fsgz='cd "\${FLIGHTSTACK_SIM_GZ}"'
-# alias fsros='cd "\${FLIGHTSTACK_SIM_ROS}"'
-# alias px4dir='cd "\${FLIGHTSTACK_SIM_AP}/px4"'
-# alias apdir='cd "\${FLIGHTSTACK_SIM_AP}/ardupilot"'
-# alias px4msgsw='cd "\${FLIGHTSTACK_SIM_ROS}/px4_msgs_ws"'
-# alias simws='cd "\${FLIGHTSTACK_SIM_ROS}/sim_ws"'
+alias fsroot='cd "\${FLIGHTSTACK_SIM_ROOT}"'
+alias fsap='cd "\${FLIGHTSTACK_SIM_AP}"'
+alias fsgz='cd "\${FLIGHTSTACK_SIM_GZ}"'
+alias fsros='cd "\${FLIGHTSTACK_SIM_ROS}"'
 ${MARK_END}
 EOF
 

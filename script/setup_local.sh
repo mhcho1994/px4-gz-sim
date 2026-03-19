@@ -1,68 +1,116 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# install base packages to run bash scripts
-sudo apt-get -y update && \
-sudo apt-get -y upgrade && \
-sudo apt-get -y --quiet --no-install-recommends install \
-    locales
+# -----------------------------------------------------------------------------
+# setup_local.sh
+# Local environment setup script.
+# This script has only been tested on Windows Subsystem for Linux (WSL) with Ubuntu 22.04. 
+# Successful installation on newer Ubuntu versions is not guaranteed.
+# -----------------------------------------------------------------------------
 
-# set and generate system locale
-sudo locale-gen en_US en_US.UTF-8
-sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-export LANG=en_US.UTF-8
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$THIS_DIR/.." && pwd)"
 
-# get the host user, group information to setup user
-export HOST_UID=$(id -u)
-export HOST_GID=$(id -g)
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+GID_INPUT="${GID_INPUT:-107}"
+GID_RENDER="${GID_RENDER:-110}"
+CURRENT_USER="${USER:-$(id -un)}"
 
-# add groups before we do anything that might add a new group
-export GID_INPUT=107
-export GID_RENDER=110
-sudo groupadd -r -g $GID_INPUT input && \
-sudo groupadd -r -g $GID_RENDER render
+log() {
+    echo "[INFO] $*"
+}
 
-# setup user
-sudo usermod -a -G sudo,plugdev,dialout,input,render,video $USER
+warn() {
+    echo "[WARN] $*" >&2
+}
 
-# install required dependencies and packages using scripts
-# base
-sudo chown $USER:$USER ./install/base.sh
-sudo chmod +x ./install/base.sh
-bash ./install/base.sh
+die() {
+    echo "[ERROR] $*" >&2
+    exit 1
+}
 
-# ros2 (humble)
-sudo chown $USER:$USER ./install/ros2.sh
-sudo chmod +x ./install/ros2.sh
-bash ./install/ros2.sh
+require_file() {
+    local file="$1"
+    [[ -f "$file" ]] || die "Required file not found: $file"
+}
 
-# ignition-gazebo (harmonic from binary or source)
-sudo chown $USER:$USER ./install/gazebo.sh
-sudo chmod +x ./install/gazebo.sh
-bash ./install/gazebo.sh
+run_script() {
+    local script_path="$1"
+    shift
+    require_file "$script_path"
 
-# autopilots (dependencies)
-sudo chown $USER:$USER ./install/autopilot.sh
-sudo chmod +x ./install/autopilot.sh
-bash ./install/autopilot.sh
+    log "Preparing script: $script_path"
+    sudo chown "$CURRENT_USER:$CURRENT_USER" "$script_path"
+    sudo chmod +x "$script_path"
 
-# extra packages
-sudo chown $USER:$USER ./install/extra.sh
-sudo chmod +x ./install/extra.sh
-bash ./install/extra.sh
+    log "Running script: $script_path $*"
+    bash "$script_path" "$@"
+}
 
-# get source
-sudo chown $USER:$USER ./script/get_src.sh
-bash ./script/get_src.sh
+ensure_group() {
+    local group_name="$1"
+    local group_gid="$2"
 
+    if getent group "$group_name" >/dev/null 2>&1; then
+        log "Group '$group_name' already exists. Skipping."
+    else
+        log "Creating group '$group_name' with GID $group_gid"
+        sudo groupadd -r -g "$group_gid" "$group_name"
+    fi
+}
 
-# # clear docker by removing unnecessary packages and emptying temporary folder
-# bash ./install/clean.sh
+install_locales() {
+    log "Updating package index and upgrading packages"
+    sudo apt-get -y update
+    sudo apt-get -y upgrade
 
-# run user setup script
-sudo chown $USER:$USER ./install/usersetup.sh
-bash ./install/usersetup.sh
+    log "Installing base locale package"
+    sudo apt-get -y --quiet --no-install-recommends install locales
 
+    log "Generating locale en_US.UTF-8"
+    sudo locale-gen en_US en_US.UTF-8
+    sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+    export LANG=en_US.UTF-8
+}
 
-# # 
-# set +e
-# set +x
+setup_groups_and_user() {
+    log "Host UID: $HOST_UID"
+    log "Host GID: $HOST_GID"
+
+    ensure_group "input" "$GID_INPUT"
+    ensure_group "render" "$GID_RENDER"
+
+    log "Adding user '$CURRENT_USER' to required groups"
+    sudo usermod -a -G sudo,plugdev,dialout,input,render,video "$CURRENT_USER"
+}
+
+main() {
+    log "Starting local setup from: $PROJECT_ROOT"
+
+    cd "$PROJECT_ROOT"
+
+    install_locales
+    setup_groups_and_user
+
+    # Install required dependencies and packages
+    run_script "$PROJECT_ROOT/install/base.sh"
+    run_script "$PROJECT_ROOT/install/ros2.sh" --ros-distro humble
+    run_script "$PROJECT_ROOT/install/gazebo.sh" --install binary
+    run_script "$PROJECT_ROOT/install/autopilot.sh" --with-ardupilot
+    run_script "$PROJECT_ROOT/install/extra.sh"
+
+    # Get source
+    run_script "$PROJECT_ROOT/script/get_src.sh --with-ardupilot"
+
+    # Optional cleanup
+    run_script "$PROJECT_ROOT/install/clean.sh"
+
+    # User setup
+    run_script "$PROJECT_ROOT/install/usersetup.sh"
+
+    log "Local setup completed successfully."
+    warn "You may need to log out and log back in for new group memberships to take effect."
+}
+
+main "$@"

@@ -1,117 +1,161 @@
 FROM ubuntu:22.04
 LABEL maintainer="Minhyun Cho <cho515@purdue.edu>"
 
-# environment variables to set pacakge manager
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=America/New_York
-RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+# -----------------------------------------------------------------------------
+# Environment
+# - environment variables to set pacakge manager
+# - environment variable to designate the directory 
+#   where temporary files and sockets are stored and accessible
+# - environment variables to enable the use of NVIDIA GPU
+#   ref. https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html
+# - add bin folder as environmental variable
+# - protobuff related environmental variable
+# - environment variables for system locale
+# -----------------------------------------------------------------------------
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=America/New_York \
+    XDG_RUNTIME_DIR=/tmp/runtime-docker \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=all \
+    PATH=/home/user/bin:${PATH} \
+    PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8
 
-# environment variable to designate the directory where temporary files and sockets are stored and accessible
-ENV XDG_RUNTIME_DIR=/tmp/runtime-docker
+# -----------------------------------------------------------------------------
+# Shell configuration
+# - use bash instead of sh
+# - enable pipefail to catch errors in piped commands
+# -----------------------------------------------------------------------------
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# environment variables to enable the use of NVIDIA GPU
-# ref. https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=all
-
-# add bin folder as environmental variable
-ENV PATH="/home/user/bin:${PATH}"
-
-# protobuff related environmental variable
-ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-
-# set default shell during Docker image build to bash
-SHELL ["/bin/bash", "-l", "-c"]
-
-# install base packages to run bash scripts
-RUN apt-get -y update && \
-    apt-get -y upgrade && \
-    apt-get -y --quiet --no-install-recommends install \
-    sudo \
-    locales
-
-# clear docker by removing unnecessary packages and emptying temporary folder
-COPY /install/clean.sh /tmp/clean.sh
-RUN chmod +x /tmp/clean.sh
-RUN bash /tmp/clean.sh
-
-# set and generate system locale
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
-RUN locale-gen en_US.UTF-8 && \
-	update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
-	export LANG=en_US.UTF-8
-
-# get the host user, group information to setup user
-ARG HOST_USER_NAME HOST_USER_ID HOST_GROUP_NAME HOST_GROUP_ID
-
-# add groups before we do anything that might add a new group
-ARG GID_INPUT=107
-ARG GID_RENDER=110
-RUN sudo groupadd -r -g $GID_INPUT input \
- && sudo groupadd -r -g $GID_RENDER render
-
-# setup user
+# -----------------------------------------------------------------------------
+# Build arguments
+# - UID/GID for container user (to match host user if needed)
+# - additional groups for device access (input, render)
+# - host user/group info (mainly for metadata / consistency with compose)
+# -----------------------------------------------------------------------------
 ARG UID_USER=1000
 ARG GID_USER=1000
-RUN groupadd --gid $GID_USER user \
- && adduser --disabled-password --gecos '' user --uid $UID_USER --gid $UID_USER\
- && usermod -a -G sudo,plugdev,dialout,input,render,video user \
- && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+ARG GID_INPUT=107
+ARG GID_RENDER=110
 
+ARG HOST_USER_NAME=user
+ARG HOST_USER_ID=1000
+ARG HOST_GROUP_NAME=user
+ARG HOST_GROUP_ID=1000
+
+ENV HOST_USER_NAME=${HOST_USER_NAME} \
+    HOST_USER_ID=${HOST_USER_ID} \
+    HOST_GROUP_NAME=${HOST_GROUP_NAME} \
+    HOST_GROUP_ID=${HOST_GROUP_ID}
+
+# -----------------------------------------------------------------------------
+# Base packages and locale setup
+# - set frontend as noninteractive mode
+# - install minimal required packages (sudo, locales)
+# - configure system locale to UTF-8
+# - remove apt cache to reduce image size
+# -----------------------------------------------------------------------------
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        sudo \
+        locales && \
+    locale-gen en_US.UTF-8 && \
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
+    rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Groups and user setup
+# - create additional system groups (input, render) for hardware/device access
+# - create a non-root user inside the container
+# - add user to commonly required groups (sudo, dialout, video, etc.)
+# - configure passwordless sudo
+# - create and set permissions for XDG runtime directory
+# - setup environmental variable for container user to run dependencies installation
+# -----------------------------------------------------------------------------
+RUN groupadd -f -g "${GID_INPUT}" input && \
+    groupadd -f -g "${GID_RENDER}" render && \
+    groupadd --gid "${GID_USER}" user && \
+    useradd --uid "${UID_USER}" --gid "${GID_USER}" --create-home --shell /bin/bash user && \
+    usermod -aG sudo,plugdev,dialout,input,render,video user && \
+    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    mkdir -p "${XDG_RUNTIME_DIR}" && \
+    chown user:user "${XDG_RUNTIME_DIR}" && \
+    chmod 700 "${XDG_RUNTIME_DIR}"
+
+ENV USER=user \
+    HOME=/home/user
+
+# -----------------------------------------------------------------------------
+# Install scripts (copied with correct ownership for user execution)
+# - base: common dependencies
+# - ros2: ROS2 installation (e.g., Humble)
+# - gazebo: simulation environment (Ignition Gazebo)
+# - autopilot: PX4 / ArduPilot dependencies
+# - extra: additional tools and utilities
+# - usersetup: user-specific environment configuration
+# -----------------------------------------------------------------------------
+COPY --chown=user:user install/base.sh /tmp/install/base.sh
+COPY --chown=user:user install/ros2.sh /tmp/install/ros2.sh
+COPY --chown=user:user install/gazebo.sh /tmp/install/gazebo.sh
+COPY --chown=user:user install/autopilot.sh /tmp/install/autopilot.sh
+COPY --chown=user:user install/extra.sh /tmp/install/extra.sh
+COPY --chown=user:user install/clean.sh /tmp/clean.sh
+
+# make all install scripts executable
+RUN chmod +x /tmp/install/*.sh
+
+# -----------------------------------------------------------------------------
+# Execute installation scripts as non-root user
+# - ensures environment is configured similarly to real user environment
+# - avoids permission issues in user workspace
+# -----------------------------------------------------------------------------
 USER user
 
-# install required dependencies and packages using scripts (docker build cache)
-# base
-COPY --chown=user:user /install/base.sh /tmp/install/base.sh
-RUN chmod +x /tmp/install/base.sh
 RUN bash /tmp/install/base.sh
+RUN bash /tmp/install/ros2.sh --ros-distro humble
+RUN bash /tmp/install/gazebo.sh --install binary
+RUN bash /tmp/install/autopilot.sh --mode deps --with-ardupilot
+RUN bash /tmp/install/extra.sh --mode deps
 
-# ROS2 (Foxy)
-COPY --chown=user:user /install/ros2.sh /tmp/install/ros2.sh
-RUN chmod +x /tmp/install/ros2.sh
-RUN bash /tmp/install/ros2.sh
-
-# Gazebo garden (from binary)
-COPY --chown=user:user /install/gazebo.sh /tmp/install/gazebo.sh
-RUN chmod +x /tmp/install/gazebo.sh
-RUN bash /tmp/install/gazebo.sh
-
-# PX4 (PX4 dependencies)
-COPY --chown=user:user /install/px4setup.sh /tmp/install/px4setup.sh
-RUN chmod +x /tmp/install/px4setup.sh
-RUN bash /tmp/install/px4setup.sh
-
-# extra packages
-COPY --chown=user:user /install/extra.sh /tmp/install/extra.sh
-RUN chmod +x /tmp/install/extra.sh
-RUN bash /tmp/install/extra.sh
-
-# clear docker by removing unnecessary packages and emptying temporary folder
-RUN bash /tmp/clean.sh
-
-# enable apt auto-completion by deleting autoclean task (speed up Dockerfile)
-RUN sudo rm /etc/apt/apt.conf.d/docker-clean
-
-# create XDG runtime dir
-RUN mkdir /tmp/runtime-docker && sudo chmod 700 /tmp/runtime-docker
-
-# run user setup script
-COPY --chown=user:user /install/usersetup.sh /tmp/install/usersetup.sh
-RUN chmod +x /tmp/install/usersetup.sh
-RUN bash /tmp/install/usersetup.sh
-
-# setup entry point
-COPY /install/entrypoint.sh /tmp/install/entrypoint.sh
-RUN sudo chmod +x /tmp/install/entrypoint.sh
-RUN sudo chsh -s /bin/bash user
-
-# create workspace
-RUN mkdir -p /home/user/ws/px4
-RUN mkdir -p /home/user/ws/ros2_ws
-WORKDIR /home/user/ws
-
-# change user to root and run entrypoint script
+# switch back to root for final system-level operations
 USER root
+
+# -----------------------------------------------------------------------------
+# Cleanup
+# - run custom cleanup script
+# - remove Docker-specific apt auto-clean config (can speed up future apt usage)
+# -----------------------------------------------------------------------------
+RUN bash /tmp/clean.sh && \
+    rm -f /etc/apt/apt.conf.d/docker-clean || true
+
+# -----------------------------------------------------------------------------
+# Entrypoint setup
+# - copy entrypoint script
+# - make it executable
+# - set default shell for user to bash
+# -----------------------------------------------------------------------------
+COPY install/entrypoint.sh /tmp/install/entrypoint.sh
+RUN chmod +x /tmp/install/entrypoint.sh && \
+    chsh -s /bin/bash user
+
+# -----------------------------------------------------------------------------
+# Workspace setup
+# - create standard working directories for PX4 and ROS2
+# - assign ownership to non-root user
+# -----------------------------------------------------------------------------
+RUN mkdir -p /home/user/FIRE_flightstack_sim && \
+    chown -R user:user /home/user/FIRE_flightstack_sim
+
+# set working directory
+WORKDIR /home/user/FIRE_flightstack_sim
+
+# -----------------------------------------------------------------------------
+# Container entrypoint
+# - defines the default command when container starts
+# -----------------------------------------------------------------------------
 ENTRYPOINT ["/tmp/install/entrypoint.sh"]
+CMD ["bash"]

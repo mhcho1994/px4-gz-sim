@@ -12,7 +12,7 @@
         "--force",
         "--outport", "14550",
         "--startup-delay", "2",
-        "--max-run-s", "30"
+        "--max-run-s", "300"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

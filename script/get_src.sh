@@ -78,7 +78,7 @@ Examples:
   # Default (PX4 v1.16.1 + px4_msgs)
   bash get_src.sh
 
-  # Skip ArduPilot (PX4 v1.16.1 + AP Copter-4.6.2 + px4_msgs)
+  # Add ArduPilot (PX4 v1.16.1 + AP Copter-4.6.2 + px4_msgs)
   bash get_src.sh --with-ardupilot
 
   # Pin PX4 or ArduPilot
@@ -213,78 +213,5 @@ echo "Source clone DONE. Sources prepared under: ${PROJECT_ROOT}"
 echo "  PX4:        ${WITH_PX4} -> ${PX4_DIR}"
 echo "  px4_msgs:   ${WITH_PX4_MSGS} -> ${PX4_MSGS_DIR}"
 echo "  ArduPilot:  ${WITH_ARDUPILOT} -> ${ARDUPILOT_DIR}"
-echo "  Submodules: ${UPDATE_SUBMODULES}"
-echo ""
-
-
-
-
-
-git_clone_repo() {
-  # git_clone_repo <url> <ref> <dest>
-  local url="$1"
-  local ref="$2"
-  local dest="$3"
-  if [[ "${SHALLOW}" == "true" ]]; then
-    git clone -b "${ref}" --depth 1 "${url}" "${dest}"
-  else
-    git clone -b "${ref}" "${url}" "${dest}"
-  fi
-}
-
-init_submodules() {
-  local repo="$1"
-  [[ "${UPDATE_SUBMODULES}" == "true" ]] || { echo "Skipping submodules (--no-submodules): ${repo}"; return 0; }
-  [[ -d "${repo}/.git" ]] || return 0
-  echo "Initializing submodules: ${repo}"
-  ( cd "${repo}" && git submodule update --init --recursive )
-}
-
-# --------------------------
-# Ensure base directories (new layout)
-# --------------------------
-mkdir -p "${PROJECT_ROOT}/ap" "${PROJECT_ROOT}/ros"
-mkdir -p "$(dirname "${PX4_DIR}")" "$(dirname "${ARDUPILOT_DIR}")" "$(dirname "${PX4_MSGS_DIR}")"
-
-# --------------------------
-# Clone PX4
-# --------------------------
-if is_dir_empty "${PX4_DIR}"; then
-  echo "Cloning PX4-Autopilot (${PX4_REF}) into: ${PX4_DIR}"
-  git_clone_repo "https://github.com/PX4/PX4-Autopilot.git" "${PX4_REF}" "${PX4_DIR}"
-  init_submodules "${PX4_DIR}"
-else
-  echo "PX4 directory exists and is not empty, skipping: ${PX4_DIR}"
-fi
-
-# # --------------------------
-# # Clone px4_msgs
-# # --------------------------
-# if is_dir_empty "${PX4_MSGS_DIR}"; then
-#   echo "Cloning px4_msgs (${PX4_MSGS_REF}) into: ${PX4_MSGS_DIR}"
-#   git_clone_repo "https://github.com/PX4/px4_msgs.git" "${PX4_MSGS_REF}" "${PX4_MSGS_DIR}"
-# else
-#   echo "px4_msgs directory exists and is not empty, skipping: ${PX4_MSGS_DIR}"
-# fi
-
-# # --------------------------
-# # Clone ArduPilot (default enabled)
-# # --------------------------
-# if [[ "${WITH_ARDUPILOT}" == "true" ]]; then
-#   if is_dir_empty "${ARDUPILOT_DIR}"; then
-#     echo "Cloning ArduPilot (${ARDUPILOT_REF}) into: ${ARDUPILOT_DIR}"
-#     git_clone_repo "https://github.com/ArduPilot/ardupilot.git" "${ARDUPILOT_REF}" "${ARDUPILOT_DIR}"
-#     init_submodules "${ARDUPILOT_DIR}"
-#   else
-#     echo "ArduPilot directory exists and is not empty, skipping: ${ARDUPILOT_DIR}"
-#   fi
-# fi
-
-echo ""
-echo "DONE. Sources prepared under: ${PROJECT_ROOT}"
-echo "  PX4:        ${PX4_DIR}"
-echo "  px4_msgs:   ${PX4_MSGS_DIR}"
-echo "  ArduPilot:  ${WITH_ARDUPILOT} -> ${ARDUPILOT_DIR}"
-echo "  Shallow:    ${SHALLOW}"
 echo "  Submodules: ${UPDATE_SUBMODULES}"
 echo ""

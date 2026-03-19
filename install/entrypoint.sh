@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# entrypoint.sh — align container user UID/GID with host and drop privileges
-#
-# Features:
-#  - Clean --help output
-#  - Optional --debug enables set -x
-#  - Safe UID/GID remapping
-#  - Optional --chown PATH (can be used multiple times)
-#  - Avoids unnecessary recursive chown of entire home directory
+# entrypoint.sh — align container user UID/GID with host, run setup, drop privileges
 
 # --------------------------
 # Defaults
@@ -27,22 +20,21 @@ Options:
                     Can be specified multiple times.
 
 Environment:
-  HOST_UID (required)
-  HOST_GID (required)
+  HOST_UID          Required host user id
+  HOST_GID          Required host group id
+  HOST_USER_NAME    Optional host user name (for logging)
+  HOST_GROUP_NAME   Optional host group name (for logging)
 
 Examples:
   docker run \\
     -e HOST_UID=\$(id -u) \\
     -e HOST_GID=\$(id -g) \\
-    <image> --chown /home/user/ws --chown /data
+    <image> --chown /home/user/FIRE_flightstack_sim -- bash
 EOF
 }
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# --------------------------
-# Parse args
-# --------------------------
 CMD=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,56 +54,71 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --------------------------
-# Strict mode
-# --------------------------
 set -Eeuo pipefail
 trap 'echo "[entrypoint.sh] ERROR line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 [[ "${DEBUG}" == "true" ]] && set -x
 
-# --------------------------
-# Validate environment
-# --------------------------
 [[ -n "${HOST_UID:-}" ]] || die "please set HOST_UID"
 [[ -n "${HOST_GID:-}" ]] || die "please set HOST_GID"
 
-echo "Mapping ${USER_NAME} -> ${HOST_UID}:${HOST_GID}"
+HOST_USER_NAME="${HOST_USER_NAME:-unknown}"
+HOST_GROUP_NAME="${HOST_GROUP_NAME:-unknown}"
+
+echo "[ENTRYPOINT] Host user : ${HOST_USER_NAME}"
+echo "[ENTRYPOINT] Host group: ${HOST_GROUP_NAME}"
+echo "[ENTRYPOINT] Mapping ${USER_NAME} -> ${HOST_UID}:${HOST_GID}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   die "Entrypoint must run as root"
 fi
 
-# --------------------------
-# Update group
-# --------------------------
 current_gid="$(id -g "${USER_NAME}")"
 if [[ "${current_gid}" != "${HOST_GID}" ]]; then
   groupmod --gid "${HOST_GID}" "${USER_NAME}"
 fi
 
-# --------------------------
-# Update user
-# --------------------------
 current_uid="$(id -u "${USER_NAME}")"
 if [[ "${current_uid}" != "${HOST_UID}" ]]; then
   usermod --uid "${HOST_UID}" "${USER_NAME}"
 fi
 
-# --------------------------
-# Selective chown paths
-# --------------------------
 for path in "${CHOWN_PATHS[@]}"; do
   if [[ -e "${path}" ]]; then
-    echo "Chowning ${path} -> ${USER_NAME}:${USER_NAME}"
+    echo "[ENTRYPOINT] Chowning ${path} -> ${USER_NAME}:${USER_NAME}"
     chown -R "${USER_NAME}:${USER_NAME}" "${path}" || true
   else
-    echo "WARNING: ${path} does not exist, skipping"
+    echo "[ENTRYPOINT] WARNING: ${path} does not exist, skipping"
   fi
 done
 
-# --------------------------
-# Drop privileges
-# --------------------------
+SETUP_FLAG="/home/${USER_NAME}/.setup_done"
+
+if [[ ! -f "${SETUP_FLAG}" ]]; then
+  echo "[ENTRYPOINT] Running first-time setup..."
+
+  sudo -u "${USER_NAME}" -H bash -lc "
+    set -euo pipefail
+
+    echo '[SETUP] autopilot setup'
+    bash /tmp/install/autopilot.sh --mode setup --with-ardupilot
+
+    echo '[SETUP] extra setup'
+    bash /tmp/install/extra.sh --mode setup
+
+    if [[ -f /tmp/install/usersetup.sh ]]; then
+      echo '[SETUP] user setup'
+      bash /tmp/install/usersetup.sh
+    fi
+  "
+
+  touch "${SETUP_FLAG}"
+  chown "${USER_NAME}:${USER_NAME}" "${SETUP_FLAG}"
+
+  echo "[ENTRYPOINT] Setup completed."
+else
+  echo "[ENTRYPOINT] Setup already done. Skipping."
+fi
+
 if [[ ${#CMD[@]} -gt 0 ]]; then
   exec sudo -u "${USER_NAME}" -H -- "${CMD[@]}"
 else

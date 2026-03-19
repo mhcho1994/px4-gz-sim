@@ -22,7 +22,8 @@ BUILD_TYPE="RelWithDebInfo"       # --build-type
 ROS_DISTRO="humble"
 GZ_VERSION="harmonic"
 
-PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$THIS_DIR/.." && pwd)"
 GZ_WS_DIR="${PROJECT_ROOT}/gz/${GZ_VERSION}_ws"
 
 # ros_gz control:

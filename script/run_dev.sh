@@ -1,13 +1,18 @@
-#!/bin/bash
-
-# exit when errors occur and print each command
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 set -x
 
-# set the current user name/group/uid/gid as environment variables
-export HOST_UID=$(id -u)
-export HOST_GID=$(id -g)
+export HOST_UID="$(id -u)"
+export HOST_GID="$(id -g)"
+export HOST_USER_NAME="$(id -un)"
+export HOST_GROUP_NAME="$(id -gn)"
+export DISPLAY="${DISPLAY:-:0}"
 
-# enable the communication between containers and X windows in the host
+cleanup() {
+    xhost -local:docker || true
+}
+
+trap cleanup EXIT
+
 xhost +local:docker
-docker compose up
+docker compose up --build

@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # autopilot.sh — install autopilot deps (PX4 and/or ArduPilot) + optional extras
 #
+# Modes:
+#   --mode deps   : install system dependencies only
+#   --mode setup  : run repo/build/setup steps only
+#   --mode all    : run both (default)
+#
 # Features:
 #  - help
 #  - debug enables `set -x`
-#  - install PX4 deps via official ubuntu.sh (with --no-sim-tools)
+#  - PX4 deps via official ubuntu.sh (with --no-sim-tools)
 #  - Micro XRCE-DDS Agent install modes:
 #      (A) ROS 2 workspace build (colcon)  [DEFAULT]
 #      (B) source build + /usr/local install (cmake + sudo make install)
@@ -21,6 +26,8 @@
 # Defaults
 # --------------------------
 DEBUG="false"
+MODE="all"  # deps | setup | all
+
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 
 # What to install
@@ -61,6 +68,11 @@ Options:
   -h, --help                 Show this help and exit (no command tracing)
   --debug                    Enable command tracing (set -x)
 
+  --mode MODE                What to run: deps | setup | all (default: ${MODE})
+                             deps  = install system dependencies only
+                             setup = clone/build/configure only
+                             all   = run both
+
   --project-root PATH        Project root (default: ${PROJECT_ROOT})
 
   # Select autopilots
@@ -90,20 +102,29 @@ Options:
   --ardupilot-gz-build-type  CMake build type for ardupilot_gazebo (default: ${ARDUPILOT_GZ_BUILD_TYPE})
 
 Examples:
-  # PX4 deps + XRCE agent (DEFAULT: ros2 workspace build)
-  bash autopilot.sh
+  # PX4 deps + XRCE agent build dependencies only
+  bash autopilot.sh --mode deps
+
+  # PX4 setup only (clone/build)
+  bash autopilot.sh --mode setup
+
+  # PX4 deps + setup
+  bash autopilot.sh --mode all
 
   # PX4 deps + XRCE agent via /usr/local (source install)
-  bash autopilot.sh --dds-mode source
+  bash autopilot.sh --mode all --dds-mode source
 
   # Change ROS distro + ws location
-  bash autopilot.sh --ros-distro humble --ros2-ws ${PROJECT_ROOT}/ros2/px4_ros_uxrce_dds_ws
+  bash autopilot.sh --mode all --ros-distro humble --ros2-ws ${PROJECT_ROOT}/ros2/px4_ros_uxrce_dds_ws
 
   # ArduPilot + plugin + SITL_Models (PX4 still on by default)
-  bash autopilot.sh --with-ardupilot
+  bash autopilot.sh --mode all --with-ardupilot
 
-  # ArduPilot-only
-  bash autopilot.sh --no-px4 --with-ardupilot
+  # ArduPilot-only deps for Dockerfile
+  bash autopilot.sh --mode deps --no-px4 --with-ardupilot
+
+  # ArduPilot-only setup in container runtime
+  bash autopilot.sh --mode setup --no-px4 --with-ardupilot
 EOF
 }
 
@@ -122,6 +143,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) help; exit 0 ;;
     --debug) DEBUG="true"; shift ;;
+
+    --mode)
+      [[ $# -ge 2 ]] || die "--mode requires a value (deps|setup|all)"
+      MODE="$2"
+      shift 2
+      ;;
 
     --project-root)
       [[ $# -ge 2 ]] || die "--project-root requires a path"
@@ -166,7 +193,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Validate DDS mode
+# Validate
+if [[ "${MODE}" != "deps" && "${MODE}" != "setup" && "${MODE}" != "all" ]]; then
+  die "Invalid --mode: ${MODE} (expected: deps|setup|all)"
+fi
+
 if [[ "${DDS_MODE}" != "ros2" && "${DDS_MODE}" != "source" ]]; then
   die "Invalid --dds-mode: ${DDS_MODE} (expected: ros2|source)"
 fi
@@ -174,7 +205,7 @@ fi
 # --------------------------
 # Strict mode
 # --------------------------
-set -Ee
+set -Eeuo pipefail
 trap 'echo "[autopilot.sh] ERROR line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 if [[ "${DEBUG}" == "true" ]]; then
   set -x
@@ -231,14 +262,51 @@ install_px4_deps() {
   chmod +x "${tmpdir}/ubuntu.sh"
 
   bash "${tmpdir}/ubuntu.sh" --no-sim-tools
+}
+
+prepare_px4_dir() {
+  echo ""
+  echo "==> Preparing PX4 directory"
+  echo ""
 
   mkdir -p "${PX4_DIR}"
   echo "PX4 workspace directory prepared at: ${PX4_DIR}"
-  echo "NOTE: This script installs dependencies only; clone PX4 repo separately if desired."
+  echo "NOTE: This script prepares the directory only; clone PX4 repo separately if desired."
 }
 
 # --------------------------
-# Micro XRCE-DDS Agent (MODE A): ROS 2 workspace build (colcon)  [DEFAULT]
+# Micro XRCE-DDS Agent: deps-only
+# --------------------------
+install_micro_xrce_agent_build_deps() {
+  pick_dds_ref
+
+  echo ""
+  echo "==> Installing Micro XRCE-DDS Agent build dependencies only"
+  echo "    DDS_MODE=${DDS_MODE}"
+  echo "    ROS_DISTRO=${ROS_DISTRO}"
+  echo "    DDS_AGENT_REF=${DDS_AGENT_REF}"
+  echo ""
+
+  sudo apt-get -y update
+
+  if [[ "${DDS_MODE}" == "ros2" ]]; then
+    sudo apt-get -y --no-install-recommends install \
+      git \
+      build-essential \
+      cmake \
+      python3-colcon-common-extensions \
+      python3-rosdep \
+      python3-vcstool
+  else
+    sudo apt-get -y --no-install-recommends install \
+      git \
+      cmake \
+      build-essential
+  fi
+}
+
+# --------------------------
+# Micro XRCE-DDS Agent (MODE A): ROS 2 workspace build (colcon)
 # --------------------------
 install_micro_xrce_agent_ros2_ws() {
   pick_dds_ref
@@ -252,15 +320,6 @@ install_micro_xrce_agent_ros2_ws() {
 
   local ros_setup="/opt/ros/${ROS_DISTRO}/setup.bash"
   [[ -f "${ros_setup}" ]] || die "ROS 2 setup not found: ${ros_setup} (install ROS 2 ${ROS_DISTRO} first)"
-
-  sudo apt-get -y update
-  sudo apt-get -y --no-install-recommends install \
-    git \
-    build-essential \
-    cmake \
-    python3-colcon-common-extensions \
-    python3-rosdep \
-    python3-vcstool
 
   sudo rosdep init 2>/dev/null || true
   rosdep update
@@ -307,13 +366,8 @@ install_micro_xrce_agent_source() {
   echo "    dir=${DDS_AGENT_DIR}"
   echo ""
 
-  sudo apt-get -y update
-  sudo apt-get -y --no-install-recommends install \
-    git \
-    cmake \
-    build-essential
-
   mkdir -p "$(dirname "${DDS_AGENT_DIR}")"
+
   if [[ ! -d "${DDS_AGENT_DIR}/.git" ]]; then
     git clone -b "${DDS_AGENT_REF}" https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "${DDS_AGENT_DIR}"
   else
@@ -336,7 +390,7 @@ install_micro_xrce_agent_source() {
 
 install_micro_xrce_agent() {
   case "${DDS_MODE}" in
-    ros2)  install_micro_xrce_agent_ros2_ws ;;
+    ros2)   install_micro_xrce_agent_ros2_ws ;;
     source) install_micro_xrce_agent_source ;;
     *) die "Internal error: unknown DDS_MODE=${DDS_MODE}" ;;
   esac
@@ -361,44 +415,34 @@ install_ardupilot_deps() {
   rm -rf "${tmpdir}"
   mkdir -p "${tmpdir}"
 
-  git clone --depth 1 --filter=blob:none --sparse --branch ${ARDUPILOT_REF} https://github.com/ArduPilot/ardupilot.git "$tmpdir"
+  git clone --depth 1 --filter=blob:none --sparse --branch "${ARDUPILOT_REF}" \
+    https://github.com/ArduPilot/ardupilot.git "${tmpdir}"
 
   pushd "${tmpdir}" >/dev/null
-
   git sparse-checkout set Tools/environment_install Tools/completion
-
   bash Tools/environment_install/install-prereqs-ubuntu.sh -y
-
   popd >/dev/null
+
   rm -rf "${tmpdir}"
+}
+
+prepare_ardupilot_dir() {
+  echo ""
+  echo "==> Preparing ArduPilot directory"
+  echo ""
 
   mkdir -p "${ARDUPILOT_DIR}"
   echo "ArduPilot workspace directory prepared at: ${ARDUPILOT_DIR}"
-  echo "NOTE: This installs deps only; clone ArduPilot separately if desired."
+  echo "NOTE: This script prepares the directory only; clone ArduPilot separately if desired."
 }
 
 # --------------------------
-# ArduPilot: ardupilot_gazebo plugin + SITL_Models
+# ArduPilot: ardupilot_gazebo plugin deps-only
 # --------------------------
-detect_or_set_gz_overlay() {
-  if [[ -n "${GZ_OVERLAY_SETUP}" ]]; then
-    [[ -f "${GZ_OVERLAY_SETUP}" ]] || die "--gz-overlay-setup not found: ${GZ_OVERLAY_SETUP}"
-    return 0
-  fi
-
-  local candidate="${PROJECT_ROOT}/gz/${GZ_VERSION}_ws/install/setup.bash"
-  if [[ -f "${candidate}" ]]; then
-    GZ_OVERLAY_SETUP="${candidate}"
-  else
-    GZ_OVERLAY_SETUP=""
-  fi
-}
-
-install_ardupilot_gazebo_plugin() {
+install_ardupilot_gazebo_plugin_deps() {
   echo ""
-  echo "==> Installing ArduPilot Gazebo plugin (ArduPilot/ardupilot_gazebo)"
+  echo "==> Installing ArduPilot Gazebo plugin build dependencies only"
   echo "    GZ_VERSION=${GZ_VERSION}"
-  echo "    dir=${ARDUPILOT_GZ_DIR}"
   echo ""
 
   local gz_sim_dev_pkg=""
@@ -427,6 +471,31 @@ install_ardupilot_gazebo_plugin() {
     gstreamer1.0-plugins-bad \
     gstreamer1.0-libav \
     gstreamer1.0-gl
+}
+
+# --------------------------
+# ArduPilot: ardupilot_gazebo plugin + SITL_Models
+# --------------------------
+detect_or_set_gz_overlay() {
+  if [[ -n "${GZ_OVERLAY_SETUP}" ]]; then
+    [[ -f "${GZ_OVERLAY_SETUP}" ]] || die "--gz-overlay-setup not found: ${GZ_OVERLAY_SETUP}"
+    return 0
+  fi
+
+  local candidate="${PROJECT_ROOT}/gz/${GZ_VERSION}_ws/install/setup.bash"
+  if [[ -f "${candidate}" ]]; then
+    GZ_OVERLAY_SETUP="${candidate}"
+  else
+    GZ_OVERLAY_SETUP=""
+  fi
+}
+
+install_ardupilot_gazebo_plugin() {
+  echo ""
+  echo "==> Installing ArduPilot Gazebo plugin (ArduPilot/ardupilot_gazebo)"
+  echo "    GZ_VERSION=${GZ_VERSION}"
+  echo "    dir=${ARDUPILOT_GZ_DIR}"
+  echo ""
 
   mkdir -p "$(dirname "${ARDUPILOT_GZ_DIR}")"
   if [[ ! -d "${ARDUPILOT_GZ_DIR}/.git" ]]; then
@@ -440,6 +509,7 @@ install_ardupilot_gazebo_plugin() {
 
   detect_or_set_gz_overlay
   if [[ -n "${GZ_OVERLAY_SETUP}" ]]; then
+    # shellcheck disable=SC1090
     source "${GZ_OVERLAY_SETUP}"
     echo "==> Using Gazebo overlay for build: ${GZ_OVERLAY_SETUP}"
   else
@@ -502,24 +572,61 @@ EOF
 # Main
 # --------------------------
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
+echo "MODE=${MODE}"
 echo "WITH_PX4=${WITH_PX4}"
 echo "WITH_ARDUPILOT=${WITH_ARDUPILOT}"
 echo "DDS_MODE=${DDS_MODE}"
 echo "ROS_DISTRO=${ROS_DISTRO}"
 echo "ROS2_WS_DIR=${ROS2_WS_DIR}"
 echo "DDS_AGENT_REF=${DDS_AGENT_REF:-<auto>}"
+echo "DDS_AGENT_DIR=${DDS_AGENT_DIR}"
+echo "PX4_DIR=${PX4_DIR}"
+echo "ARDUPILOT_DIR=${ARDUPILOT_DIR}"
+echo "ARDUPILOT_GZ_DIR=${ARDUPILOT_GZ_DIR}"
+echo "SITL_MODELS_DIR=${SITL_MODELS_DIR}"
+echo "GZ_VERSION=${GZ_VERSION}"
 
 if [[ "${WITH_PX4}" == "true" ]]; then
-  install_px4_deps
-  install_micro_xrce_agent
+  case "${MODE}" in
+    deps)
+      install_px4_deps
+      install_micro_xrce_agent_build_deps
+      ;;
+    setup)
+      prepare_px4_dir
+      install_micro_xrce_agent
+      ;;
+    all)
+      install_px4_deps
+      install_micro_xrce_agent_build_deps
+      prepare_px4_dir
+      install_micro_xrce_agent
+      ;;
+  esac
 fi
 
 if [[ "${WITH_ARDUPILOT}" == "true" ]]; then
-  install_ardupilot_deps
-  install_ardupilot_gazebo_plugin
-  install_sitl_models
-  write_ardupilot_gz_env_snippet
+  case "${MODE}" in
+    deps)
+      install_ardupilot_deps
+      install_ardupilot_gazebo_plugin_deps
+      ;;
+    setup)
+      prepare_ardupilot_dir
+      install_ardupilot_gazebo_plugin
+      install_sitl_models
+      write_ardupilot_gz_env_snippet
+      ;;
+    all)
+      install_ardupilot_deps
+      install_ardupilot_gazebo_plugin_deps
+      prepare_ardupilot_dir
+      install_ardupilot_gazebo_plugin
+      install_sitl_models
+      write_ardupilot_gz_env_snippet
+      ;;
+  esac
 fi
 
 echo ""
-echo "Autopilot Dependencies Installation DONE."
+echo "Autopilot installation DONE. MODE=${MODE}"
