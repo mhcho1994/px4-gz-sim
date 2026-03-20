@@ -129,7 +129,7 @@ export PYTHONWARNINGS=ignore:::setuptools.installer,ignore:::setuptools.command.
 #  - GZ_SIM_SYSTEM_PLUGIN_PATH
 #  - LD_LIBRARY_PATH additions
 # --------------------------
-ARDUPILOT_GZ_ENV="\${FLIGHTSTACK_SIM_ROOT}/gz/ardupilot_gz_env.sh"
+ARDUPILOT_GZ_ENV="${PROJECT_ROOT}/gz/ardupilot_gz_env.sh"
 if [ -f "\${ARDUPILOT_GZ_ENV}" ]; then
   source "\${ARDUPILOT_GZ_ENV}"
 fi
@@ -139,6 +139,7 @@ fi
 #  - Ensure user-local bin is on PATH (MAVProxy, pip tools)
 #  - ArduPilot bash completion (sim_vehicle.py, waf, etc.)
 #  - ArduPilot Tools/autotest on PATH (for sim_vehicle.py, mavproxy helpers, etc.)
+#  - Shell startup file to configure ArduPilot environment variables, using a Docker-specific env file instead of .profile
 # --------------------------
 export PATH="\$HOME/.local/bin:\$PATH"
 

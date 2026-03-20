@@ -27,8 +27,8 @@
 # --------------------------
 DEBUG="false"
 MODE="all"  # deps | setup | all
-
-PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$THIS_DIR/.." && pwd)"
 
 # What to install
 WITH_PX4="true"          # default: keep PX4 flow as-is
@@ -336,8 +336,9 @@ install_micro_xrce_agent_ros2_ws() {
     git -C Micro-XRCE-DDS-Agent pull --ff-only || true
   fi
 
-  # shellcheck disable=SC1090
+  set +u
   source "${ros_setup}"
+  set -u
   cd "${ROS2_WS_DIR}"
 
   # deps resolution best-effort

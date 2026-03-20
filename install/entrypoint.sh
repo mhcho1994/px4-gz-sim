@@ -99,15 +99,19 @@ if [[ ! -f "${SETUP_FLAG}" ]]; then
   sudo -u "${USER_NAME}" -H bash -lc "
     set -euo pipefail
 
-    echo '[SETUP] autopilot setup'
-    bash /tmp/install/autopilot.sh --mode setup --with-ardupilot
+    if [[ -f /install/autopilot.sh ]]; then
+      echo '[SETUP] autopilot setup'
+      bash /install/autopilot.sh --mode setup --with-ardupilot
+    fi
 
-    echo '[SETUP] extra setup'
-    bash /tmp/install/extra.sh --mode setup
+    if [[ -f /install/extra.sh ]]; then
+      echo '[SETUP] extra setup'
+      bash /install/extra.sh --mode setup
+    fi
 
-    if [[ -f /tmp/install/usersetup.sh ]]; then
+    if [[ -f /install/usersetup.sh ]]; then
       echo '[SETUP] user setup'
-      bash /tmp/install/usersetup.sh
+      bash /install/usersetup.sh
     fi
   "
 
