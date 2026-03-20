@@ -10,7 +10,26 @@
       "args": [
         "--run-root", "./data",
         "--force",
-        "--outport", "14550",
+        "--startup-delay", "2",
+        "--max-run-s", "300"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    {
+      "name": "Debug: PX4+Gazebo launcher",
+      "type": "python",
+      "request": "launch",
+      "python": "/usr/bin/python3",
+      "program": "${workspaceFolder}/tools/launcher/run_px4_gz_sitl.py",
+      "args": [
+        "--run-root", "./data",
+        "--force",
         "--startup-delay", "2",
         "--max-run-s", "300"
       ],

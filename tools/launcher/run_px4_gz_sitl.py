@@ -24,15 +24,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import shlex
 import signal
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from tracemalloc import stop
 from typing import Any, Optional, TextIO
-
 import yaml
 
 _THIS_FILE = Path(__file__).resolve()
@@ -42,24 +42,29 @@ _COMMANDER_DIR = _TOOLS_DIR / "commander"
 if str(_COMMANDER_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMANDER_DIR))
 
-from mavsdk_px4_commander import PX4MissionRunner  # noqa: E402
+# from pymavlink_px4_commander import PX4MissionRunner
 
 
 @dataclass
 class PX4ScenarioConfig:
-    px4_dir: Path = Path("/path/to/PX4-Autopilot")
+    # sim instance parameters
+    instance: int = 0
+    mavsdk_url: str = "udp://127.0.0.1:14650"
+    startup_delay_s: float = 0.0
+    max_run_s: float = 60.0
+
+    # sim setup
+    vehicle: int = 4001
+    frame: str = "gz_x500"
     world: str = "default"
-    autostart: int = 4001
-    model: str = "gz_x500"
-    out_udp_port: int = 14540
-    startup_delay_s: float = 5.0
-    max_run_s: float = 180.0
-    grace_s: float = 10.0
+    location: str = "Purdue"
     scenario_name: str = "unnamed"
+    qgc_outport: int = 14650
 
 
 @dataclass
 class ProcHandle:
+    """Container holding a running process and its log file info."""
     name: str
     proc: subprocess.Popen
     log_path: Path
@@ -74,10 +79,18 @@ def _popen(
     env: Optional[dict[str, str]] = None,
     verbose: bool = False,
 ) -> ProcHandle:
+    """
+    Start a subprocess and redirect stdout/stderr into a log file.
+
+    - The process is started in a new process group (POSIX) so we can terminate
+      the whole tree (parent + children) later.
+    - Logs are line-buffered for real-time tailing (tail -f).
+    """
     print(f"[LAUNCH] {name}: {' '.join(cmd)}")
     print(f"[CWD]    {name}: {cwd if cwd else os.getcwd()}")
     print(f"[LOG]    {name}: {log_path}")
 
+    # Print environmental variables
     if verbose and env is not None:
         print(f"[ENV]    {name}:")
         for k in sorted(env.keys()):
@@ -85,8 +98,12 @@ def _popen(
                 print(f"         {k}={env[k]}")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Line-buffered text logs (buffering=1 works with text=True).
     f = open(log_path, "w", buffering=1, encoding="utf-8")
 
+    # preexec_fn=os.setsid: create a new process group/session (POSIX).
+    # On Windows, os.setsid is not available; we fall back to default behavior.
     proc = subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd else None,
@@ -94,13 +111,14 @@ def _popen(
         stderr=subprocess.STDOUT,
         text=True,
         env=env,
-        preexec_fn=os.setsid if os.name != "nt" else None,
+        preexec_fn=os.setsid if os.name != "nt" else None, # new process group
     )
 
     return ProcHandle(name=name, proc=proc, log_path=log_path, log_file=f)
 
 
 def _run_quiet(cmd: str) -> None:
+    """Run a shell command quietly, ignoring all errors."""
     try:
         subprocess.run(
             cmd,
@@ -114,6 +132,16 @@ def _run_quiet(cmd: str) -> None:
 
 
 def _pkill_patterns(patterns: list[str], sig: str) -> None:
+    """
+    Send a signal to processes matched by full command line.
+
+    Parameters
+    ----------
+    patterns : list[str]
+        Patterns passed to `pkill -f`.
+    sig : str
+        Signal name such as 'TERM' or 'KILL'.
+    """
     if os.name == "nt":
         return
 
@@ -122,6 +150,17 @@ def _pkill_patterns(patterns: list[str], sig: str) -> None:
 
 
 def _cleanup_gz_processes() -> None:
+    """
+    Best-effort cleanup for Gazebo / gz sim related processes that may survive
+    after killing the parent shell/process group.
+
+    Why needed:
+    - Killing the bash PID or even its process group does not always terminate
+      the actual gz server process.
+    - Depending on the setup, Gazebo may appear as:
+        * gz sim
+        * gzserver / gzclient
+    """
     if os.name == "nt":
         return
 
@@ -129,25 +168,51 @@ def _cleanup_gz_processes() -> None:
         r"gz sim",
         r"gz sim server",
         r"gz sim gui",
-        r"ign gazebo",
     ]
     _pkill_patterns(patterns, "INT")
 
 
-def _cleanup_px4_processes() -> None:
+def _cleanup_sitl_processes() -> None:
+    """Best-effort cleanup for common PX4 SITL related processes."""
     if os.name == "nt":
         return
 
     patterns = [
-        r"/bin/px4",
-        r"px4-rc",
-        r"gz_x500",
-        r"PX4-Autopilot/build/.*/bin/px4",
+        r"px4",
+        r"./build/px4_sitl_default",
     ]
+
+    _pkill_patterns(patterns, "INT")
+
+
+def _cleanup_qgc_processes() -> None:
+    """
+    Best-effort cleanup for QGroundControl related processes that may survive
+    after killing the parent shell/process group.
+
+    Why needed:
+    - Killing the bash PID or even its process group does not always terminate
+      the actual QGroundControl process.
+    """
+    if os.name == "nt":
+        return
+
+    patterns = [
+        r"QGroundControl",
+        r"bin/QGroundControl",
+    ]
+
     _pkill_patterns(patterns, "INT")
 
 
 def _kill_tree(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
+    """
+    Terminate a process and its descendants.
+
+    For interactive tools such as sim_vehicle.py, we try SIGINT first
+    because it is closer to Ctrl-C and may allow cleaner shutdown.
+    Then we escalate to SIGTERM and finally SIGKILL.
+    """
     if ph is None or ph.proc.poll() is not None:
         return
 
@@ -159,7 +224,7 @@ def _kill_tree(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
     else:
         pgid = None
 
-    # 1) SIGINT
+    # 1) Try SIGINT first
     try:
         if os.name != "nt" and pgid is not None:
             os.killpg(pgid, signal.SIGINT)
@@ -174,7 +239,7 @@ def _kill_tree(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
             break
         time.sleep(0.1)
 
-    # 2) SIGTERM
+    # 2) Escalate to SIGTERM
     if ph.proc.poll() is None:
         try:
             if os.name != "nt" and pgid is not None:
@@ -200,23 +265,29 @@ def _kill_tree(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         except Exception:
             pass
 
-    if "gz" in ph.name or "gazebo" in ph.name:
+    # Final fallback cleanup for leftovers
+    if "gz" in ph.name:
         _cleanup_gz_processes()
-    if "px4" in ph.name:
-        _cleanup_px4_processes()
 
+    if "sitl" in ph.name:
+        _cleanup_sitl_processes()
+
+    if "qgc" in ph.name:
+        _cleanup_qgc_processes()
 
 def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
+    """Best-effort: ensure process is dead and log file is closed."""
+
     if ph is None:
         return
 
     try:
-        _kill_tree(ph, grace_s=grace_s)
+        _kill_tree(ph)
     except Exception:
         pass
 
     try:
-        ph.proc.wait(timeout=2)
+        ph.proc.wait(timeout=grace_s)
     except Exception:
         pass
 
@@ -230,24 +301,38 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
     except Exception:
         pass
 
+def run_sitl_cmd(instance: int, mavproxy_outport: int, mavlink_url: str, location: str) -> list[str]:
+    """
+    Run the sim_vehicle.py command for ArduCopter SITL.
 
-def _finalize_runner(runner, timeout: float = 2.0) -> None:
-    if runner is None:
-        return
+    Notes:
+      - `-I <instance>` helps separate multiple runs (some paths/ports are derived).
+      - `--out=udp:127.0.0.1:<port>` is useful if you want to connect QGC/MAVSDK.
+      - `--no-rebuild` makes repeated runs faster.
+      TODO: adding the following options
+        "-I", str(instance),
+    """
+    return [
+        "sim_vehicle.py",
+        "-v", "ArduCopter",
+        "-f", "gazebo-iris",
+        "--model", "JSON",
+        f"--location={location}",
+        f"--out=udp:127.0.0.1:{mavproxy_outport}",
+        f"--out={mavlink_url}",
+        "--no-rebuild",
+    ]
 
-    try:
-        runner.request_stop()
-    except Exception:
-        pass
+def run_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
+    """
+    Run the Gazebo Sim command.
 
-    try:
-        runner.join(timeout=timeout)
-    except Exception:
-        pass
-
-
-def build_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
+    Example:
+      gz sim -v4 -r iris_runway.sdf
+    """
     return ["gz", "sim", verbose, "-r", world_sdf]
+
+
 
 
 def find_px4_binary(px4_dir: Path) -> Path:
@@ -317,16 +402,21 @@ def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
 
 
 def _iter_run_dirs(data_root: Path) -> list[Path]:
+    """
+    Find ./data/run_* directories, sorted by name.
+    """
     if not data_root.exists():
         return []
     return sorted([p for p in data_root.iterdir() if p.is_dir() and p.name.startswith("run_")])
 
 
 def _should_skip_run_dir(run_dir: Path, force: bool) -> bool:
+    """
+    Skip if 'px4_logs' exists.
+    """
     logs_dir = run_dir / "px4_logs"
     if force:
         return False
-
     ulg_files = list(logs_dir.rglob("*.ulg"))
     return logs_dir.exists() and (len(ulg_files) > 0)
 
@@ -460,34 +550,36 @@ def run_once(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--run-root",
-        type=Path,
-        default=Path("./data"),
-        help="Root folder containing run_xxx/scenario.yaml",
-    )
+    ap.add_argument("--run-root", type=Path, default=Path("./data"), help="Root folder containing run_xxx/scenario.yaml")
     ap.add_argument("--force", action="store_true", help="Re-run even if px4_logs already exist")
-    ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--startup-delay-s", type=float, default=5.0)
+    ap.add_argument("--max-run-s", type=float, default=60.0)
     args = ap.parse_args()
 
+    # Access to the resolved run root path
     data_root = args.run_root.resolve()
 
     stop = {"flag": False}
     current: dict[str, Optional[ProcHandle]] = {
         "gz": None,
-        "px4": None,
+        "QGC": None,
+        "sitl": None,
     }
 
     def _sig(_signum, _frame):
         stop["flag"] = True
-        _finalize_proc(current.get("px4"))
         _finalize_proc(current.get("gz"))
-        current["px4"] = None
+        _finalize_proc(current.get("QGC"))
+        _finalize_proc(current.get("sitl"))
         current["gz"] = None
+        current["QGC"] = None
+        current["sitl"] = None
 
+    # Terminate on Ctrl+C or SIGTERM
     signal.signal(signal.SIGINT, _sig)
     signal.signal(signal.SIGTERM, _sig)
 
+    # Iterations for run directories
     run_dirs = _iter_run_dirs(data_root)
     if not run_dirs:
         print(f"No run_xxx directories found under: {data_root}")
@@ -495,15 +587,15 @@ def main() -> int:
 
     overall_rc = 0
 
-    for run_dir in run_dirs:
+    for run_dir in run_dirs[0:2]:
         if stop["flag"]:
             print("Interrupted. Exiting.")
             return 130
 
         if _should_skip_run_dir(run_dir, force=args.force):
-            print(f"[SKIP] {run_dir} (px4_logs contains .ulg)")
+            print(f"[SKIP] {run_dir} (px4_logs exists and contains .ulg)")
             continue
-
+            # HERE
         try:
             cfg = _load_scenario_yaml_px4(run_dir)
         except Exception as e:

@@ -106,13 +106,20 @@ def _get(d: Dict[str, Any], path: str, default=None):
 
 def parse_connect_url(scn: Dict[str, Any]) -> str:
     """
-    Convert MAVSDK-style connection URLs into pymavlink format.
+    Convert scenario MAVLink connection URLs into pymavlink format.
 
-    Example
-    -------
-    MAVSDK format:
+    Supported input examples
+    ------------------------
+    Scenario format:
+        udp:127.0.0.1:14550
+
+    Also accepts:
         udp://127.0.0.1:14550
+        udpin:127.0.0.1:14550
+        tcp:127.0.0.1:5760
 
+    Output examples
+    ---------------
     pymavlink format:
         udpin:127.0.0.1:14550
 
@@ -122,16 +129,30 @@ def parse_connect_url(scn: Dict[str, Any]) -> str:
 
     url = _get(scn, "autopilots.ardupilot.mavlink.connect_url")
 
-    if url:
-        # Convert MAVSDK-style URL to pymavlink format
+    if isinstance(url, str) and url.strip():
+        url = url.strip()
+
+        # Scenario style: udp:127.0.0.1:14550
+        if url.startswith("udp:"):
+            hostport = url[len("udp:"):]
+            return f"udpin:{hostport}"
+
+        # Legacy style: udp://127.0.0.1:14550
         if url.startswith("udp://"):
             hostport = url[len("udp://"):]
             return f"udpin:{hostport}"
-        return url
+
+        # Already pymavlink-compatible
+        if url.startswith(("udpin:", "udpout:", "tcp:", "tcpin:", "tcpout:", "serial:")):
+            return url
+        
+        raise ValueError(
+            f"Unsupported MAVLink connect_url format: {url!r}. "
+            "Expected forms like 'udp:127.0.0.1:14550' or 'udpin:127.0.0.1:14550'."
+        )
 
     # Default connection port used by SITL
-    port = _get(scn, "autopilots.ardupilot.sim.out_udp_port", 14550)
-    return f"udpin:127.0.0.1:{port}"
+    return f"udpin:127.0.0.1:14550"
 
 
 def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
@@ -332,10 +353,10 @@ class ArduPilotMissionRunner:
         #     f"thread={threading.get_ident()}"
         # )
 
-        msg = m.recv_match(type="HEARTBEAT", blocking=True, timeout=20)
+        msg = m.recv_match(type="HEARTBEAT", blocking=True, timeout=60)
 
         if msg is None:
-            raise RuntimeError("Heartbeat timeout (20s)")
+            raise RuntimeError("Heartbeat timeout (60s)")
 
         print(f"[HEARTBEAT_CHECKING] Heartbeat OK (sys={msg.get_srcSystem()}, comp={msg.get_srcComponent()})")
 
@@ -533,7 +554,7 @@ class ArduPilotMissionRunner:
             success=True,
         )
 
-    def _guided_takeoff(self, m, takeoff_alt_m: float, timeout: float = 30.0) -> None:
+    def _guided_takeoff(self, m, takeoff_alt_m: float, timeout: float = 60.0) -> None:
         self._set_status(MissionState.TAKING_OFF, f"takeoff to {takeoff_alt_m:.1f} m")
         m.mav.command_long_send(
             m.target_system,
@@ -545,7 +566,7 @@ class ArduPilotMissionRunner:
             takeoff_alt_m,
         )
 
-        _ = m.recv_match(type="COMMAND_ACK", blocking=True, timeout=timeout/10)
+        _ = m.recv_match(type="COMMAND_ACK", blocking=True, timeout=5.0)
 
         t0 = time.time()
         while time.time() - t0 < timeout:
