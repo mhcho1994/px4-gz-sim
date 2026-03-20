@@ -41,7 +41,7 @@ _COMMANDER_DIR = _TOOLS_DIR / "commander"
 if str(_COMMANDER_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMANDER_DIR))
 
-from mavlink_ardupilot_commander import ArduPilotMissionRunner, MissionState, MissionStatus
+from pymavlink_ardupilot_commander import ArduPilotMissionRunner, MissionState, MissionStatus
 print("[LOADING] Import ArduPilotMissionRunner")
 
 @dataclass
