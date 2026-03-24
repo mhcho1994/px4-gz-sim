@@ -32,24 +32,27 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from tracemalloc import stop
-from typing import Any, Optional, TextIO
+from typing import Any, Optional, TextIO, Tuple
 import yaml
+import math
 
 _THIS_FILE = Path(__file__).resolve()
 _TOOLS_DIR = _THIS_FILE.parents[1]
 _COMMANDER_DIR = _TOOLS_DIR / "commander"
+_QGC_DIR = _TOOLS_DIR / "QGC"
 
 if str(_COMMANDER_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMANDER_DIR))
 
-# from pymavlink_px4_commander import PX4MissionRunner
+from pymavlink_px4_commander import PX4MissionRunner
 
 
 @dataclass
 class PX4ScenarioConfig:
     # sim instance parameters
+    px4_dir: str = "${FLIGHTSTACK_SIM_ROOT}/ap/px4"
     instance: int = 0
-    mavsdk_url: str = "udp://127.0.0.1:14650"
+    mavlink_url: str = "udp://127.0.0.1:14650"
     startup_delay_s: float = 0.0
     max_run_s: float = 60.0
 
@@ -178,8 +181,7 @@ def _cleanup_sitl_processes() -> None:
         return
 
     patterns = [
-        r"px4",
-        r"./build/px4_sitl_default",
+        r"px4_sitl_default/bin/px4",
     ]
 
     _pkill_patterns(patterns, "INT")
@@ -200,6 +202,7 @@ def _cleanup_qgc_processes() -> None:
     patterns = [
         r"QGroundControl",
         r"bin/QGroundControl",
+        r"QGroundControl-x86_64.AppImage",
     ]
 
     _pkill_patterns(patterns, "INT")
@@ -301,39 +304,6 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
     except Exception:
         pass
 
-def run_sitl_cmd(instance: int, mavproxy_outport: int, mavlink_url: str, location: str) -> list[str]:
-    """
-    Run the sim_vehicle.py command for ArduCopter SITL.
-
-    Notes:
-      - `-I <instance>` helps separate multiple runs (some paths/ports are derived).
-      - `--out=udp:127.0.0.1:<port>` is useful if you want to connect QGC/MAVSDK.
-      - `--no-rebuild` makes repeated runs faster.
-      TODO: adding the following options
-        "-I", str(instance),
-    """
-    return [
-        "sim_vehicle.py",
-        "-v", "ArduCopter",
-        "-f", "gazebo-iris",
-        "--model", "JSON",
-        f"--location={location}",
-        f"--out=udp:127.0.0.1:{mavproxy_outport}",
-        f"--out={mavlink_url}",
-        "--no-rebuild",
-    ]
-
-def run_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
-    """
-    Run the Gazebo Sim command.
-
-    Example:
-      gz sim -v4 -r iris_runway.sdf
-    """
-    return ["gz", "sim", verbose, "-r", world_sdf]
-
-
-
 
 def find_px4_binary(px4_dir: Path) -> Path:
     """
@@ -359,6 +329,9 @@ def find_px4_binary(px4_dir: Path) -> Path:
 def find_px4_rc_script(px4_dir: Path) -> Path:
     """
     PX4 SITL startup script commonly used by the binary.
+    rcS: PX4 nsh-style initialization script
+    e.g.) param set MAV_SYS_ID $((px4_instance+1))
+          param set UXRCE_DDS_KEY $((px4_instance+1))
     """
     candidates = [
         px4_dir / "ROMFS" / "px4fmu_common" / "init.d-posix" / "rcS",
@@ -373,30 +346,96 @@ def find_px4_rc_script(px4_dir: Path) -> Path:
     )
 
 
-def build_px4_cmd(px4_bin: Path, rc_script: Path) -> list[str]:
-    return [str(px4_bin), str(rc_script)]
+def run_sitl_cmd(px4_bin: Path) -> list[str]:
+    return [str(px4_bin)]
+
+
+def read_location_from_txt(txt_path: Path, name: str) -> Tuple[float, float, float, float]:
+    """
+    Parse a line like:
+      Purdue=40.41176161953683,-86.93352081596879,0,0
+
+    Returns:
+      lat, lon, alt, heading_deg
+    """
+    if not txt_path.is_file():
+        raise FileNotFoundError(f"locations file not found: {txt_path}")
+
+    for line in txt_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == name:
+            parts = [p.strip() for p in value.split(",")]
+            if len(parts) < 4:
+                raise ValueError(f"Invalid location line for {name}: {line}")
+
+            lat = float(parts[0])
+            lon = float(parts[1])
+            alt = float(parts[2])
+            heading_deg = float(parts[3])
+            return lat, lon, alt, heading_deg
+
+    raise KeyError(f"Location '{name}' not found in {txt_path}")
+
+
+def run_qgc_cmd(out_port: int) -> list[str]:
+    """
+    Launch QGroundControl (GCS).
+    QGC automatically listens on UDP port 14550.
+    """
+    qgc_bin = _QGC_DIR / "QGroundControl-x86_64.AppImage"
+    return [str(qgc_bin)]
+
+
+def run_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
+    """
+    Run the Gazebo Sim command.
+
+    Example:
+      gz sim -v4 -r iris_runway.sdf
+    """
+    return ["gz", "sim", verbose, "-r", world_sdf]
 
 
 def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
+    """
+    Load scenario.yaml from run_dir and extract PX4-specific configuration.
+
+    Supported keys in scenario.yaml:
+      px4_dir: ${FLIGHTSTACK_SIM_ROOT}/ap/px4
+      instance: 0
+      vehicle: 4001
+      frame: gz_x500
+      world: default
+      location: Purdue
+      qgc_outport: 14650
+      connect_url (mavlink): udp:127.0.0.1:14650
+    """
     scenario_path = run_dir / "scenario.yaml"
     if not scenario_path.exists():
         raise FileNotFoundError(f"Missing scenario.yaml: {scenario_path}")
 
     data: dict[str, Any] = yaml.safe_load(scenario_path.read_text(encoding="utf-8")) or {}
 
+    # Accept both top-level keys and nested (e.g., {"sim": {...}})
+    # You can extend this mapping if your scenario.yaml has a different schema.
     sim = data.get("autopilots", {}).get("px4", {}).get("sim", {})
     scenario = data.get("common", {}).get("scenario", {})
+    mavlink = data.get("autopilots",{}).get("px4",{}).get("mavlink",{})
 
     cfg = PX4ScenarioConfig(
-        px4_dir=Path(str(sim.get("px4_dir", PX4ScenarioConfig.px4_dir))),
+        px4_dir=Path(os.path.expandvars(str(sim.get("px4_dir", PX4ScenarioConfig.px4_dir)))).resolve(),
+        instance=int(sim.get("instance", PX4ScenarioConfig.instance)),
+        vehicle=str(sim.get("vehicle", PX4ScenarioConfig.vehicle)),
+        frame=str(sim.get("frame", PX4ScenarioConfig.frame)),
         world=str(sim.get("world", PX4ScenarioConfig.world)),
-        autostart=int(sim.get("autostart", PX4ScenarioConfig.autostart)),
-        model=str(sim.get("model", PX4ScenarioConfig.model)),
-        out_udp_port=int(sim.get("out_udp_port", PX4ScenarioConfig.out_udp_port)),
-        startup_delay_s=float(sim.get("startup_delay_s", PX4ScenarioConfig.startup_delay_s)),
-        max_run_s=float(sim.get("max_run_s", PX4ScenarioConfig.max_run_s)),
-        grace_s=float(sim.get("grace_s", PX4ScenarioConfig.grace_s)),
+        location=str(sim.get("location", PX4ScenarioConfig.location)),
         scenario_name=str(scenario.get("name", PX4ScenarioConfig.scenario_name)),
+        qgc_outport=str(sim.get("mavproxy_outport", PX4ScenarioConfig.qgc_outport)),
+        mavlink_url=str(mavlink.get("connect_url", PX4ScenarioConfig.mavlink_url)),
     )
     return cfg
 
@@ -421,79 +460,144 @@ def _should_skip_run_dir(run_dir: Path, force: bool) -> bool:
     return logs_dir.exists() and (len(ulg_files) > 0)
 
 
+def _finalize_runner(runner, timeout: float = 2.0) -> None:
+    """
+    Best-effort shutdown for a mission runner thread.
+    """
+    if runner is None:
+        return
+
+    try:
+        runner.request_stop()
+    except Exception:
+        pass
+
+
 def run_once(
+    px4_dir: Path,
+    instance: int,
     scenario_path: Path,
     logs_dir: Path,
+    qgc_outport: int,
+    mavlink_url: str,
+    startup_delay_s: float,
+    max_run_s: float,
     stop: dict,
     current: dict,
-    cfg: PX4ScenarioConfig,
-    verbose: bool = False,
+    vehicle: str,
+    frame: str,
+    world: str,
+    location: str,
 ) -> int:
-    gz_log = logs_dir / "gazebo.log"
-    px4_log = logs_dir / "px4.log"
+    """
+    Run a single PX4 SITL + Gazebo + MAVProxy simulation episode.
+    """
 
-    px4_dir = cfg.px4_dir.resolve()
+    # set logs dir
+    sitl_log = logs_dir / "sitl.log"
+    gz_log = logs_dir / "gazebo.log"
+    qgc_log = logs_dir / "qgc.log"
+
+    # find PX4 built binary and startup run commands
     px4_bin = find_px4_binary(px4_dir)
     rc_script = find_px4_rc_script(px4_dir)
 
     # Gazebo first
-    if current.get("gz") is None:
-        print(f"[INFO] Starting Gazebo world={cfg.world}")
-        gz_env = os.environ.copy()
+    # TODO: gazebo standalone mode
+    if False:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
 
         # Helpful Gazebo resource path if worlds/models live inside PX4 repo
-        px4_models = px4_dir / "Tools" / "simulation" / "gazebo-classic" / "sitl_gazebo-classic"
+        gz_env = os.environ.copy()
         existing = gz_env.get("GZ_SIM_RESOURCE_PATH", "")
-        if px4_models.exists():
+        paths = [p for p in existing.split(":") if p]
+        
+        px4_models = px4_dir / "Tools" / "simulation" / "gz" / "models"
+        px4_worlds = px4_dir / "Tools" / "simulation" / "gz" / "worlds"
+        
+        if px4_models not in paths and px4_worlds not in paths:
+            gz_env["GZ_SIM_RESOURCE_PATH"] = (
+                f"{px4_models}:{px4_worlds}:{existing}" if existing else str(px4_models)
+            )
+        elif px4_models not in paths and px4_worlds in paths:
             gz_env["GZ_SIM_RESOURCE_PATH"] = (
                 f"{px4_models}:{existing}" if existing else str(px4_models)
             )
+        elif px4_models in paths and px4_worlds not in paths:
+            gz_env["GZ_SIM_RESOURCE_PATH"] = (
+                f"{px4_worlds}:{existing}" if existing else str(px4_models)
+            )
 
-        current["gz"] = _popen(
-            "gazebo",
-            build_gz_cmd(f"{cfg.world}.sdf"),
-            cwd=logs_dir,
-            log_path=gz_log,
-            env=gz_env,
-            verbose=verbose,
+        gz = _popen("gazebo", run_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log, env=gz_env)
+        current["gz"] = gz
+
+    # QGroundControl second
+    if current.get("QGC") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for QGroundControl to initialize...")
+
+        QGC = _popen("QGC", run_qgc_cmd(qgc_outport), cwd=logs_dir, log_path=qgc_log)
+        current["QGC"] = QGC
+
+
+    # PX4 standalone SITL third
+    # TODO: px4 standalone mode
+    if current.get("sitl") is None:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
+
+        lat, lon, alt, heading_deg = read_location_from_txt(
+            Path(_THIS_FILE.parent / "locations.txt"), location
         )
 
-    time.sleep(cfg.startup_delay_s)
-
-    # PX4 standalone SITL
-    if current.get("px4") is None:
-        print(f"[INFO] Starting PX4 SITL model={cfg.model} autostart={cfg.autostart}")
-
+        # pass environmental variables for SITL instance
         px4_env = os.environ.copy()
-        px4_env["PX4_SYS_AUTOSTART"] = str(cfg.autostart)
-        px4_env["PX4_SIM_MODEL"] = cfg.model
-        px4_env["PX4_GZ_WORLD"] = cfg.world
-        px4_env["PX4_GZ_STANDALONE"] = "1"
+        px4_env["PX4_SYS_AUTOSTART"] = vehicle
+        sim_engine, model = frame.split("_", 1)
+        px4_env["PX4_SIMULATOR"] = sim_engine
+        px4_env["PX4_SIM_MODEL"] = model
+        px4_env["PX4_GZ_WORLD"] = world
+        # px4_env["PX4_GZ_STANDALONE"] = "1"
         px4_env["PX4_SIM_SPEED_FACTOR"] = "1"
-        px4_env["PX4_HOME_LAT"] = "40.41176161953683"
-        px4_env["PX4_HOME_LON"] = "-86.93352081596879"
-        px4_env["PX4_HOME_ALT"] = "0.0"
 
-        # Common PX4 working dir
-        px4_run_dir = logs_dir / "px4_run"
-        px4_run_dir.mkdir(parents=True, exist_ok=True)
+        # geodetic home
+        px4_env["PX4_HOME_LAT"] = str(lat)
+        px4_env["PX4_HOME_LON"] = str(lon)
+        px4_env["PX4_HOME_ALT"] = str(alt)
 
-        current["px4"] = _popen(
-            "px4",
-            build_px4_cmd(px4_bin, rc_script),
-            cwd=px4_run_dir,
-            log_path=px4_log,
-            env=px4_env,
-            verbose=verbose,
-        )
+        # optional: yaw only, spawn at local ENU origin
+        yaw_rad = heading_deg/180*math.pi
+        px4_env["PX4_GZ_MODEL_POSE"] = f"0,0,0,0,0,{yaw_rad}"
 
-    time.sleep(cfg.startup_delay_s)
+        # add model and world sdf
+        existing = px4_env.get("GZ_SIM_RESOURCE_PATH", "")
+        paths = [p for p in existing.split(":") if p]
+        
+        px4_models = px4_dir / "Tools" / "simulation" / "gz" / "models"
+        px4_worlds = px4_dir / "Tools" / "simulation" / "gz" / "worlds"
 
+        if px4_models not in paths and px4_worlds not in paths:
+            px4_env["GZ_SIM_RESOURCE_PATH"] = (
+                f"{px4_models}:{px4_worlds}:{existing}" if existing else str(px4_models)
+            )
+        elif px4_models not in paths and px4_worlds in paths:
+            px4_env["GZ_SIM_RESOURCE_PATH"] = (
+                f"{px4_models}:{existing}" if existing else str(px4_models)
+            )
+        elif px4_models in paths and px4_worlds not in paths:
+            px4_env["GZ_SIM_RESOURCE_PATH"] = (
+                f"{px4_worlds}:{existing}" if existing else str(px4_models)
+            )
+
+        sitl = _popen("sitl", run_sitl_cmd(px4_bin), cwd=logs_dir, log_path=sitl_log, env=px4_env)
+        current["sitl"] = sitl
+
+    time.sleep(startup_delay_s)
     runner = PX4MissionRunner(scenario_path=scenario_path)
     runner.start()
 
     t0 = time.time()
-    rc = 0
 
     while True:
         if stop["flag"]:
@@ -502,25 +606,16 @@ def run_once(
             rc = 130
             break
 
-        if time.time() - t0 > cfg.max_run_s:
-            print(f"[TIMEOUT] exceeded {cfg.max_run_s:.1f}s")
+        # 2) max runtime exceeded
+        if time.time() - t0 > max_run_s:
+            print(f"[TIMEOUT] exceeded {max_run_s:.1f}s")
             _finalize_runner(runner)
             rc = 124
             break
 
-        if current.get("gz") and current["gz"].proc.poll() is not None:
-            print("[EXIT] gazebo terminated unexpectedly")
-            _finalize_runner(runner)
-            rc = 1
-            break
-
-        if current.get("px4") and current["px4"].proc.poll() is not None:
-            print("[EXIT] px4 terminated unexpectedly")
-            _finalize_runner(runner)
-            rc = 1
-            break
-
+        # 3) commander finished
         status = runner.get_status()
+
         print(
             f"[RUNNER] state={status.state.name} "
             f"done={status.done} success={status.success} "
@@ -539,11 +634,12 @@ def run_once(
 
         time.sleep(1.0)
 
-    _finalize_proc(current.get("px4"), grace_s=cfg.grace_s)
-    current["px4"] = None
-
-    _finalize_proc(current.get("gz"), grace_s=cfg.grace_s)
+    _finalize_proc(current.get("sitl"))
+    current["sitl"] = None
+    _finalize_proc(current.get("gz"))
     current["gz"] = None
+
+    print('[HIT] move to next iteration')
 
     return rc
 
@@ -595,7 +691,8 @@ def main() -> int:
         if _should_skip_run_dir(run_dir, force=args.force):
             print(f"[SKIP] {run_dir} (px4_logs exists and contains .ulg)")
             continue
-            # HERE
+
+        # Load scenario.yaml
         try:
             cfg = _load_scenario_yaml_px4(run_dir)
         except Exception as e:
@@ -603,32 +700,46 @@ def main() -> int:
             overall_rc = 2
             continue
 
+        # Create output directory for this run
         logs_root = run_dir / "px4_logs"
         logs_root.mkdir(parents=True, exist_ok=True)
+
+        # Get scenario path
         scenario_path = run_dir / "scenario.yaml"
 
-        print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")
-        print(f"  px4_dir={cfg.px4_dir}")
-        print(f"  world={cfg.world} model={cfg.model} autostart={cfg.autostart}")
-        print(f"  out_udp_port={cfg.out_udp_port}")
-        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s} grace_s={cfg.grace_s}")
-        print(f"  logs_root={logs_root} scenario_path={scenario_path}")
+        # Set other configurations
+        cfg.startup_delay_s = args.startup_delay_s
+        cfg.max_run_s = args.max_run_s
 
+        print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")
+        print(f"  px4_dir={cfg.px4_dir} vehicle={cfg.vehicle}")
+        print(f"  world={cfg.world} location={cfg.location}")
+        print(f"  instance={cfg.instance} qgc_outport={cfg.qgc_outport}")
+        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s}")
+        print(f"  logs_root={logs_root} scenario_path={scenario_path} mavlink_url={cfg.mavlink_url}")
+
+        # Execute the scenario
         rc = run_once(
+            px4_dir=cfg.px4_dir,
+            instance=cfg.instance,
             scenario_path=scenario_path,
             logs_dir=logs_root,
+            qgc_outport=cfg.qgc_outport,
+            mavlink_url=cfg.mavlink_url,
+            startup_delay_s=cfg.startup_delay_s,
+            max_run_s=cfg.max_run_s,
             stop=stop,
             current=current,
-            cfg=cfg,
-            verbose=args.verbose,
+            vehicle=cfg.vehicle,
+            frame=cfg.frame,
+            world=cfg.world,
+            location=cfg.location
         )
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)
 
-    _finalize_proc(current.get("px4"))
-    current["px4"] = None
-    _finalize_proc(current.get("gz"))
-    current["gz"] = None
+    _finalize_proc(current.get("QGC"))
+    current["QGC"] = None
 
     return overall_rc
 

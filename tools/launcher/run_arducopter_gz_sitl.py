@@ -47,11 +47,11 @@ print("[LOADING] Import ArduPilotMissionRunner")
 @dataclass
 class ArdupilotScenarioConfig:
     # sim instance parameters
+    ardupilot_dir: str = "${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot"
     instance: int = 0
-    mavlink_url: str = "udp://localhost:14550"
+    mavlink_url: str = "udp:127.0.0.1:14550"
     startup_delay_s: float = 0.0
     max_run_s: float = 60.0
-    ardu_dir: str = "${PROJECT_ROOT}/ap/ardupilot"
 
     # sim setup
     vehicle: str = "ArduCopter"
@@ -77,6 +77,7 @@ def _popen(
     cmd: list[str],
     cwd: Optional[Path],
     log_path: Path,
+    env: Optional[dict[str, str]] = None,
     verbose: bool = False
 ) -> ProcHandle:
     """
@@ -90,9 +91,11 @@ def _popen(
     print(f"[CWD]    {name}: {cwd if cwd else os.getcwd()}")
     print(f"[LOG]    {name}: {log_path}")
 
-    if verbose:
-        # TODO: add virtual env or other environment variables if needed
-        print(f"[ENV]    PATH={os.environ.get('PATH','')}")
+    if verbose and env is not None:
+        print(f"[ENV]    {name}:")
+        for k in sorted(env.keys()):
+            if k.startswith("PX4") or k.startswith("GZ") or k in ("PATH", "HOME"):
+                print(f"         {k}={env[k]}")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -107,6 +110,7 @@ def _popen(
         stdout=f,
         stderr=subprocess.STDOUT,
         text=True,
+        env=env,
         preexec_fn=os.setsid if os.name != "nt" else None, # new process group
     )
 
@@ -302,6 +306,7 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
     except Exception:
         pass
 
+
 # TODO: locate this function in a separate script
 def ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
     """
@@ -361,6 +366,7 @@ def run_sitl_cmd(instance: int, mavproxy_outport: int, mavlink_url: str, locatio
       - `--no-rebuild` makes repeated runs faster.
       TODO: adding the following options
         "-I", str(instance),
+      Use custom locations.txt file for reading spawning locations
     """
     return [
         "sim_vehicle.py",
@@ -413,7 +419,9 @@ def _finalize_runner(runner, timeout: float = 2.0) -> None:
     except Exception:
         pass
 
+
 def run_once(
+    ardupilot_dir: Path,
     instance: int,
     scenario_path: Path,
     logs_dir: Path,
@@ -429,11 +437,100 @@ def run_once(
     world: str,
     location: str,
 ) -> int:
+    """
+    Run a single ArduPilot SITL + Gazebo + MAVProxy simulation episode.
 
+    This function orchestrates the full lifecycle of a single simulation run:
+    launching required processes (Gazebo, MAVProxy, SITL), executing a mission
+    via `ArduPilotMissionRunner`, monitoring execution status, and handling
+    termination conditions.
+
+    Execution Flow
+    --------------
+    1. Launch Gazebo (if not already running)
+    2. Launch MAVProxy (if not already running)
+    3. Launch ArduPilot SITL (if not already running)
+    4. Start mission runner with the provided scenario
+    5. Periodically monitor:
+        - user interrupt (Ctrl+C)
+        - timeout condition
+        - mission completion status
+    6. Finalize runner and processes
+    7. Clean up SITL and Gazebo processes
+
+    Parameters
+    ----------
+    ardupilot_dir : Path
+        Root directory of the ArduPilot repository.
+
+    instance : int
+        SITL instance index (used for multi-instance simulation).
+
+    scenario_path : Path
+        Path to scenario YAML defining mission/trajectory.
+
+    logs_dir : Path
+        Directory where log files (SITL, Gazebo, MAVProxy) are stored.
+
+    mavproxy_outport : int
+        UDP port used by MAVProxy for forwarding MAVLink messages.
+
+    mavlink_url : str
+        MAVLink connection string (e.g., "udp://127.0.0.1:14550").
+
+    startup_delay_s : float
+        Delay (seconds) inserted between launching each component to allow
+        proper initialization.
+
+    max_run_s : float
+        Maximum allowed runtime (seconds) before timeout termination.
+
+    stop : dict
+        Shared flag dictionary for external interrupt handling.
+        Expected format: {"flag": bool}
+
+    current : dict
+        Dictionary storing running subprocess handles:
+        {"gz": Popen, "mavproxy": Popen, "sitl": Popen}
+
+    vehicle : str
+        ArduPilot vehicle type (e.g., "ArduCopter").
+
+    frame : str
+        Frame configuration (e.g., "gazebo-iris").
+
+    model : str
+        Simulation model type (e.g., "JSON").
+
+    world : str
+        Gazebo world name (without `.sdf` extension).
+
+    location : str
+        Predefined ArduPilot location (e.g., "Purdue").
+
+    Returns
+    -------
+    int
+        Exit code representing run outcome:
+        - 0 : successful completion
+        - 1 : mission runner error
+        - 124 : timeout
+        - 130 : user interrupt (Ctrl+C)
+
+    Notes
+    -----
+    - Processes are launched only if not already present in `current`.
+    - SITL and Gazebo are explicitly terminated at the end of the run.
+    - MAVProxy may persist across runs depending on external management.
+    - This function is designed for iterative batch execution of scenarios.
+    """
+
+    # set logs dir
     sitl_log = logs_dir / "sitl.log"
     gz_log = logs_dir / "gazebo.log"
     mavproxy_log = logs_dir / "mavproxy.log"
 
+    # Gazebo first
     if current.get("gz") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
@@ -441,6 +538,7 @@ def run_once(
         gz = _popen("gazebo", run_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log)
         current["gz"] = gz
 
+    # MAVProxy second
     if current.get("mavproxy") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for MAVProxy to initialize...")
@@ -448,6 +546,7 @@ def run_once(
         mavproxy = _popen("mavproxy", run_mavproxy_cmd(mavproxy_outport), cwd=logs_dir, log_path=mavproxy_log)
         current["mavproxy"] = mavproxy
 
+    # Ardupilot SITL third
     if current.get("sitl") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
@@ -504,7 +603,6 @@ def run_once(
     current["gz"] = None
 
     print('[HIT] move to next iteration')
-    rc = 0
     
     return rc
 
@@ -514,12 +612,15 @@ def _load_scenario_yaml_ardupilot(run_dir: Path) -> ArdupilotScenarioConfig:
     Load scenario.yaml from run_dir and extract ArduPilot-specific configuration.
 
     Supported keys in scenario.yaml:
+      ardupilot_dir: ${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot
       instance: 0
       vehicle: ArduCopter
       frame: gazebo-iris
       model: JSON
-      world: iris_runway.sdf
+      world: iris_runway
       location: Purdue
+      mavproxy_outport: 14551
+      connect_url (mavlink): udp:127.0.0.1:14550
     """
     scenario_path = run_dir / "scenario.yaml"
     if not scenario_path.exists():
@@ -533,6 +634,7 @@ def _load_scenario_yaml_ardupilot(run_dir: Path) -> ArdupilotScenarioConfig:
     scenario = data.get("common",{}).get("scenario",{})
     mavlink = data.get("autopilots",{}).get("ardupilot",{}).get("mavlink",{})
     cfg = ArdupilotScenarioConfig(
+        ardupilot_dir=Path(os.path.expandvars(str(sim.get("ardupilot_dir", ArdupilotScenarioConfig.ardupilot_dir)))).resolve(),
         instance=int(sim.get("instance", ArdupilotScenarioConfig.instance)),
         vehicle=str(sim.get("vehicle", ArdupilotScenarioConfig.vehicle)),
         frame=str(sim.get("frame", ArdupilotScenarioConfig.frame)),
@@ -541,7 +643,7 @@ def _load_scenario_yaml_ardupilot(run_dir: Path) -> ArdupilotScenarioConfig:
         location=str(sim.get("location", ArdupilotScenarioConfig.location)),
         scenario_name=str(scenario.get("name", ArdupilotScenarioConfig.scenario_name)),
         mavproxy_outport=str(sim.get("mavproxy_outport", ArdupilotScenarioConfig.mavproxy_outport)),
-        mavlink_url=str(mavlink.get("connect_url", ArdupilotScenarioConfig.mavproxy_outport)),
+        mavlink_url=str(mavlink.get("connect_url", ArdupilotScenarioConfig.mavlink_url)),
     )
     return cfg
 
@@ -619,7 +721,7 @@ def main() -> int:
 
         # Load scenario.yaml
         try:
-            cfgArdupilot = _load_scenario_yaml_ardupilot(run_dir)
+            cfg = _load_scenario_yaml_ardupilot(run_dir)
         except Exception as e:
             print(f"[ERROR] {run_dir}: failed to load scenario.yaml: {e}")
             overall_rc = 2
@@ -633,32 +735,33 @@ def main() -> int:
         scenario_path = run_dir / "scenario.yaml"
 
         # Set other configurations
-        cfgArdupilot.startup_delay_s = args.startup_delay_s
-        cfgArdupilot.max_run_s = args.max_run_s
+        cfg.startup_delay_s = args.startup_delay_s
+        cfg.max_run_s = args.max_run_s
 
-        # print(f"\n=== SCENARIO: {run_dir.name} ===")
-        print(f"\n---- {run_dir.name}: RUN {cfgArdupilot.scenario_name} Scenario ----")
-        print(f"  world={cfgArdupilot.world} location={cfgArdupilot.location}")
-        print(f"  instance={cfgArdupilot.instance} mavproxy_outport={cfgArdupilot.mavproxy_outport}")
-        print(f"  startup_delay={cfgArdupilot.startup_delay_s} max_run_s={cfgArdupilot.max_run_s}")
-        print(f"  logs_root={logs_root} scenario_path={scenario_path} mavlink_url={cfgArdupilot.mavlink_url}")
+        print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")
+        print(f"  ardupilot_dir={cfg.ardupilot_dir} vehicle={cfg.vehicle}")
+        print(f"  world={cfg.world} location={cfg.location}")
+        print(f"  instance={cfg.instance} mavproxy_outport={cfg.mavproxy_outport}")
+        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s}")
+        print(f"  logs_root={logs_root} scenario_path={scenario_path} mavlink_url={cfg.mavlink_url}")
 
         # Execute the scenario
         rc = run_once(
-            instance=cfgArdupilot.instance,
+            ardupilot_dir=cfg.ardupilot_dir,
+            instance=cfg.instance,
             scenario_path=scenario_path,
             logs_dir=logs_root,
-            mavproxy_outport=cfgArdupilot.mavproxy_outport,
-            mavlink_url=cfgArdupilot.mavlink_url,
-            startup_delay_s=cfgArdupilot.startup_delay_s,
-            max_run_s=cfgArdupilot.max_run_s,
+            mavproxy_outport=cfg.mavproxy_outport,
+            mavlink_url=cfg.mavlink_url,
+            startup_delay_s=cfg.startup_delay_s,
+            max_run_s=cfg.max_run_s,
             stop=stop,
             current=current,
-            vehicle=cfgArdupilot.vehicle,
-            frame=cfgArdupilot.frame,
-            model=cfgArdupilot.model,
-            world=cfgArdupilot.world,
-            location=cfgArdupilot.location
+            vehicle=cfg.vehicle,
+            frame=cfg.frame,
+            model=cfg.model,
+            world=cfg.world,
+            location=cfg.location
         )
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)

@@ -102,7 +102,7 @@ def ned_to_lla(ned: NED, home_lla: LLA) -> LLA:
     lon = lon0 + dlon
     alt_rel = -down # because down positive -> altitude decreases and relative to home position
 
-    return (np.degrees(lat), np.degrees(lon), alt_rel)
+    return (float(np.degrees(lat)), float(np.degrees(lon)), float(alt_rel))
 
 
 # ----------------------------------------------------------------------
@@ -111,7 +111,7 @@ def ned_to_lla(ned: NED, home_lla: LLA) -> LLA:
 @dataclass(frozen=True)
 class MissionSpec:
     """
-    Immutable container describing mission geometry.
+    Container describing mission geometry.
 
     name            : mission identifier
     takeoff_alt_m   : takeoff altitude (positive above home)
@@ -295,12 +295,22 @@ def write_scenario_yaml(
     run_dir: Path,
     mission: MissionSpec,
     *,
-    location: str,
-    world_sdf: str,
-    ap_port: int,
-    px4_port: int,
+    # HERE  
+    ardupilot_dir: str,
+    ardupilot_vehicle: str,
+    ardupilot_frame: str,
+    ardupilot_model: str,
+    ardupilot_world: str,
+    ardupilot_location: str,
+    ardupilot_mavproxy_outport: int,
+    ardupilot_connect_port: int,
     px4_dir: str,
+    px4_vehicle: int,
+    px4_frame: str,
     px4_world: str,
+    px4_location: str,
+    px4_qgc_outport: int,
+    px4_connect_port: int,
 ) -> None:
     """
     Write scenario.yaml for one run directory.

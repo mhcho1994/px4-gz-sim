@@ -57,10 +57,10 @@
       }
     },
     {
-      "name": "Debug: mavsdk_ardupilot_commander",
+      "name": "Debug: pymavlink_ardupilot_commander",
       "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/tools/commander/mavsdk_ardupilot_commander.py",
+      "program": "${workspaceFolder}/tools/commander/pymavlink_ardupilot_commander.py",
       "args": [
         "--scenario", "./data/run_000/scenario.yaml"
       ],
@@ -73,13 +73,13 @@
       }
     },
     {
-      "name": "Debug: Test",
+      "name": "Debug: pymavlink_px4_commander",
       "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/tools/launcher/test.py",
+      "program": "${workspaceFolder}/tools/commander/pymavlink_px4_commander.py",
       "args": [
-        "--run-dir", "./data/run_000",
-        ],
+        "--scenario", "./data/run_000/scenario.yaml"
+      ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false,
@@ -87,6 +87,6 @@
       "env": {
         "PYTHONUNBUFFERED": "1"
       }
-    }
+    },
   ]
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ArduPilot Mission Runner (YAML-driven)
+ArduPilot Mission Runner (YAML-driven, pymavlink-based)
 
 Purpose
 -------
@@ -69,7 +69,7 @@ class MissionState(Enum):
 @dataclass
 class MissionStatus:
     """
-    Immutable snapshot of mission runner state.
+    Snapshot of mission runner state.
 
     This object is returned to external callers so they can
     monitor progress without accessing internal variables.
@@ -156,7 +156,28 @@ def parse_connect_url(scn: Dict[str, Any]) -> str:
 
 
 def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
+    """
+    Build raw MAVLink mission items from scenario.yaml.
+
+    Supported commands:
+      22  MAV_CMD_NAV_TAKEOFF
+      16  MAV_CMD_NAV_WAYPOINT
+      178 MAV_CMD_DO_CHANGE_SPEED
+      21  MAV_CMD_NAV_LAND
+
+    Returns
+    -------
+    items : list[dict]
+        Raw mission item definitions.
+    takeoff_alt : float
+        Scenario takeoff altitude.
+    has_land : bool
+        Whether mission includes explicit land command.
+    """
+    
     home = _get(scn, "common.scenario.home_lla")
+    if home is None:
+        raise ValueError("common.scenario.home_lla is missing")
     home_lat = float(home[0])
     home_lon = float(home[1])
     home_alt = float(home[2])
@@ -190,20 +211,26 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
         elif cmd == mavutil.mavlink.MAV_CMD_NAV_WAYPOINT:
             if wp is None:
                 raise ValueError(f"Waypoint missing for command index {i}")
-            lat, lon, alt = wp
+            lat, lon, alt = float(wp[0]), float(wp[1]), float(wp[2])
             p1, p2, p3, p4 = 0, 1.0, 0, float('nan')
             p5, p6, p7 = lat, lon, alt
 
         elif cmd == mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED:
             frame = mavutil.mavlink.MAV_FRAME_MISSION
+            speed = speeds[i] if i < len(speeds) else None
+            if speed is None:
+                raise ValueError(f"Speed missing for command index {i}")
             p1 = mavutil.mavlink.SPEED_TYPE_GROUNDSPEED
-            p2 = float(speeds[i])
+            p2 = float(speed)
             p3 = -1.0
             p4 = p5 = p6 = p7 = 0
 
         elif cmd == mavutil.mavlink.MAV_CMD_NAV_LAND:
             p1, p2, p3, p4 = 0, 0, 0, float('nan')
             p5, p6, p7 = home_lat, home_lon, 0
+
+        else:
+            raise ValueError(f"Unsupported command for Ardupilot raw mission: {cmd}")
 
         items.append(
             dict(
@@ -214,6 +241,9 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
                 p5=p5, p6=p6, p7=p7,
             )
         )
+
+    if not items:
+        raise ValueError("No mission items were generated")
 
     return items, takeoff_alt, has_takeoff, do_land
 
@@ -362,7 +392,7 @@ class ArduPilotMissionRunner:
 
         self._set_status(MissionState.HEARTBEAT_OK, "heartbeat received")
 
-    def _wait_command_ack(self, m, command_id: int, timeout: float = 5.0,) -> bool:
+    def _wait_command_ack(self, m, command_id: int, timeout: float = 5.0) -> bool:
         """
         Wait for COMMAND_ACK of a specific command.
 
@@ -483,7 +513,7 @@ class ArduPilotMissionRunner:
                     sent.add(seq)
                     print(f"[MISSION_UPLOAD] Sent mission item seq={seq}, cmd={it['command']}")
 
-        print("Mission upload timeout")
+        print("[MISSION_UPLOAD] Mission upload timeout")
         return False
         
     def _read_mission_item(self, m, seq: int, timeout: float = 5.0):
@@ -550,8 +580,8 @@ class ArduPilotMissionRunner:
         self._set_status(
             MissionState.ARMED,
             "vehicle armed",
-            done=True,
-            success=True,
+            done=False,
+            success=False,
         )
 
     def _guided_takeoff(self, m, takeoff_alt_m: float, timeout: float = 60.0) -> None:
@@ -770,7 +800,7 @@ class ArduPilotMissionRunner:
         """
         Wait until vehicle passes pre-arm checks.
         """
-        import time
+
         t0 = time.time()
 
         while time.time() - t0 < timeout:
@@ -831,11 +861,11 @@ class ArduPilotMissionRunner:
             armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
             if not armed:
-                print("[DISARM] Vehicle disarmed")
+                print("[DISARM] vehicle disarmed")
                 self._set_status(MissionState.COMPLETED, "mission completed", done=True, success=True)
                 return True
 
-        print("[DISARM] Timeout waiting for disarm")
+        print("[DISARM] timeout waiting for disarm")
         raise TimeoutError("Vehicle did not disarm")
 
     def _run(self) -> None:
@@ -849,15 +879,15 @@ class ArduPilotMissionRunner:
         if self._has_started_run:
             raise RuntimeError("Mission runner _run already entered")
         self._has_started_run = True
-        print(f"[ENTER] run self_id={id(self)} thread={threading.get_ident()}")
+
+        print(f"[ENTER] Ardupilot pymavlink runner self_id={id(self)} thread={threading.get_ident()}")
 
         try:
-
             # Load scenario configuration and parse
-            scn = yaml.safe_load(self.scenario_path.read_text())
+            scn = yaml.safe_load(self.scenario_path.read_text(encoding="utf-8")) or {}
             items, takeoff_alt, has_takeoff, do_land = build_items_from_scenario(scn)
 
-            # Convert scenario MAVSDK connection URL to pymavlink format
+            # Get scenario connection URL to pymavlink format
             connect = parse_connect_url(scn)
 
             # Establish MAVLink connection assign instance
@@ -886,7 +916,7 @@ class ArduPilotMissionRunner:
 
             # Clear and upload mission
             self._clear_mission(m)
-            self._upload_mission_items(m, items, timeout=10)
+            self._upload_mission_items(m, items, timeout=10.0)
 
             # Switch to guided mode and arm
             self._set_status(MissionState.SETTING_GUIDED, "switching to GUIDED")
@@ -922,7 +952,7 @@ class ArduPilotMissionRunner:
             # self._set_mode_auto(m)
 
             # Monitor current mission
-            self._monitor_current_mission(m,items,duration=300.0)
+            self._monitor_current_mission(m, items, duration=300.0)
 
             # Stop if requested
             self._check_stop()
@@ -958,9 +988,8 @@ def main():
 
     runner = ArduPilotMissionRunner(args.scenario)
     runner.start()
-    runner.join()
 
-    status = runner._get_status()
+    status = runner.get_status()
     print(f"Mission finished: {status.state.name}, success={status.success}")
 
 if __name__ == "__main__":
