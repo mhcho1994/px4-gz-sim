@@ -285,6 +285,7 @@ def _kill_tree(ph: ProcHandle, grace_s: float = 5.0) -> None:
     if "mavproxy" in ph.name:
         _cleanup_mavproxy_processes()
 
+
 def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
     """Best-effort: ensure process is dead and log file is closed."""
     if ph is None:
@@ -307,7 +308,6 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         pass
 
 
-# TODO: locate this function in a separate script
 def ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
     """
     Ensure ArduPilot SITL binary exists. If not, build it.
@@ -335,14 +335,14 @@ def ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
 
     print("[INFO] ArduPilot not built. Building SITL...")
 
-    # 1. configure (safe to re-run)
+    # configure (safe to re-run)
     subprocess.run(
         ["./waf", "configure", "--board", "sitl"],
         cwd=ap_dir,
         check=True,
     )
 
-    # 2. build
+    # build
     subprocess.run(
         ["./waf", vehicle],
         cwd=ap_dir,
@@ -364,8 +364,6 @@ def run_sitl_cmd(instance: int, mavproxy_outport: int, mavlink_url: str, locatio
       - `-I <instance>` helps separate multiple runs (some paths/ports are derived).
       - `--out=udp:127.0.0.1:<port>` is useful if you want to connect QGC/MAVSDK.
       - `--no-rebuild` makes repeated runs faster.
-      TODO: adding the following options
-        "-I", str(instance),
       Use custom locations.txt file for reading spawning locations
     """
     return [
@@ -373,10 +371,11 @@ def run_sitl_cmd(instance: int, mavproxy_outport: int, mavlink_url: str, locatio
         "-v", "ArduCopter",
         "-f", "gazebo-iris",
         "--model", "JSON",
+        "--no-rebuild",
+        "-I", str(instance),
         f"--location={location}",
         f"--out=udp:127.0.0.1:{mavproxy_outport}",
         f"--out={mavlink_url}",
-        "--no-rebuild",
     ]
 
 
@@ -551,7 +550,18 @@ def run_once(
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
 
-        sitl = _popen("sitl", run_sitl_cmd(instance, mavproxy_outport, mavlink_url, location), cwd=logs_dir, log_path=sitl_log)
+        # pass environmental variables for SITL location info
+        locations_path = Path(_THIS_FILE.parent / "locations.txt").resolve()
+
+        if not locations_path.exists():
+            raise FileNotFoundError(
+                f"ArduPilot locations.txt not found: {locations_path}"
+            )
+
+        gz_env = os.environ.copy()
+        gz_env["ARDUPILOT_LOCATIONS"] = str(locations_path)
+
+        sitl = _popen("sitl", run_sitl_cmd(instance, mavproxy_outport, mavlink_url, location), cwd=logs_dir, log_path=sitl_log, env=gz_env)
         current["sitl"] = sitl
 
     time.sleep(startup_delay_s)
@@ -738,6 +748,10 @@ def main() -> int:
         cfg.startup_delay_s = args.startup_delay_s
         cfg.max_run_s = args.max_run_s
 
+        # Confirm that Ardupilot is built
+        ensure_ardupilot_built(ap_dir=cfg.ardupilot_dir, vehicle=cfg.vehicle.replace("Ardu", "").lower())
+
+        # Print configuration info
         print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")
         print(f"  ardupilot_dir={cfg.ardupilot_dir} vehicle={cfg.vehicle}")
         print(f"  world={cfg.world} location={cfg.location}")
@@ -766,6 +780,7 @@ def main() -> int:
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)
 
+    # Kill mavproxy and end SITL
     _finalize_proc(current.get("mavproxy"))
     current["mavproxy"] = None
 

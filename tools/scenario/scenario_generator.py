@@ -180,12 +180,14 @@ def make_turn_3pts(
     l1 = float(leg1_m)
     l2 = float(leg2_m)
 
+    dN1 = l1 * np.cos(0)
+    dE1 = l1 * np.sin(0)
     psi = np.radians(float(turn_deg))
     dN2 = l2 * np.cos(psi)
     dE2 = l2 * np.sin(psi)
 
     P1: NED = (settle, 0.0, d)
-    P2: NED = (settle + l1, 0.0, d)
+    P2: NED = (P1[0] + dN1, P1[1] + dE1, d)
     P3: NED = (P2[0] + dN2, P2[1] + dE2, d)
 
     home = home_position
@@ -295,7 +297,6 @@ def write_scenario_yaml(
     run_dir: Path,
     mission: MissionSpec,
     *,
-    # HERE  
     ardupilot_dir: str,
     ardupilot_vehicle: str,
     ardupilot_frame: str,
@@ -354,83 +355,59 @@ def write_scenario_yaml(
         )
 
     scenario = {
-
         # --------------------------------------------------------------
         # Metadata
         # --------------------------------------------------------------
         "meta": {
             "run_id": run_id,
         },
-
         # --------------------------------------------------------------
         # Common configuration (shared mission geometry)
         # --------------------------------------------------------------
         "common": {
-            "world": {
-                "kind": "sdf",
-                "path": world_sdf
-            },
-            "location": location,
-
             "scenario": {
                 "name": mission.name,
-
-                # Home for this run (LLA)
                 "home_lla": [float(home[0]), float(home[1]), float(home[2])],
-
-                # Mission-level flags/params
                 "takeoff_alt_m": float(mission.takeoff_alt_m),
-                "altitude_mode": 1,  # RelativeToHome fixed (as you stated)
+                "altitude_mode": 1,
                 "land": bool(mission.land),
-
-                # Mission items (aligned lists)
                 "command": [int(c) for c in mission.command],
-
-                # Optional per-item speed (only meaningful for DO_CHANGE_SPEED)
                 "speed_m_s": [spd_to_yaml(v) for v in mission.speed_m_s],
-
-                # Optional per-item waypoints (None -> null)
                 "waypoints_ned": [ned_to_yaml(wp) for wp in mission.waypoints_ned],
                 "waypoints_lla": [lla_to_yaml(wp) for wp in mission.waypoints_lla],
-            },
+            }
         },
-
         # --------------------------------------------------------------
         # Autopilot-specific simulation settings
         # --------------------------------------------------------------
         "autopilots": {
-
-            # ---------------- ArduPilot ----------------
             "ardupilot": {
                 "sim": {
-                    "vehicle": "ArduCopter",
-                    "frame": "gazebo-iris",
-                    "model": "JSON",
+                    "ardupilot_dir": ardupilot_dir,
                     "instance": run_id,
-                    "out_udp_port": int(ap_port),
-                    "startup_delay_s": 5,
-                    "max_run_s": 180,
-                    "grace_s": 10,
+                    "vehicle": ardupilot_vehicle,
+                    "frame": ardupilot_frame,
+                    "model": ardupilot_model,
+                    "world": ardupilot_world,
+                    "location": ardupilot_location,
+                    "mavproxy_outport": int(ardupilot_mavproxy_outport),
                 },
-                "mavsdk": {
-                    "connect_url": f"udp://127.0.0.1:{ap_port}"
+                "mavlink": {
+                    "connect_url": f"udp:127.0.0.1:{int(ardupilot_connect_port)}"
                 },
             },
-
-            # ---------------- PX4 ----------------
             "px4": {
                 "sim": {
                     "px4_dir": px4_dir,
+                    "instance": run_id,
+                    "vehicle": int(px4_vehicle),
+                    "frame": px4_frame,
                     "world": px4_world,
-                    "autostart": 4001,
-                    "model": "gz_x500",
-                    "out_udp_port": int(px4_port),
-                    "startup_delay_s": 5,
-                    "max_run_s": 180,
-                    "grace_s": 10,
+                    "location": px4_location,
+                    "qgc_outport": int(px4_qgc_outport),
                 },
-                "mavsdk": {
-                    "connect_url": f"udp://127.0.0.1:{px4_port}"
+                "mavlink": {
+                    "connect_url": f"udp:127.0.0.1:{int(px4_connect_port)}"
                 },
             },
         },
@@ -441,23 +418,11 @@ def write_scenario_yaml(
         encoding="utf-8",
     )
 
+
 # ----------------------------------------------------------------------
 # Main Entry
 # ----------------------------------------------------------------------
 def main() -> int:
-
-    # home = (40.4117616, -86.9335208, 0.0)  # (lat, lon, alt) 
-
-    # ned_wpts = [
-    #     (0.0, 0.0, -5.0),     # 5m up
-    #     (10.0, 0.0, -5.0),
-    #     (10.0, 10.0, -5.0),
-    # ]
-
-    # lla_wpts = [ned_to_lla(w, home) for w in ned_wpts]
-    # print ("NED waypoints:", ned_wpts)
-    # print ("LLA waypoints:", lla_wpts)
-
     """
     CLI entry point.
 
@@ -468,61 +433,84 @@ def main() -> int:
         4. Generate scenario.yaml for each run
     """
 
-    ap = argparse.ArgumentParser(
-        description="Scenario generator (pattern-specific)"
-    )
+    # --------------------------------------------------------------
+    # Common arguments
+    # --------------------------------------------------------------
+    common_parser  = argparse.ArgumentParser(add_help=False)
 
     # Output settings
-    ap.add_argument("--outdir", type=Path, default=Path("./data"))
-    ap.add_argument("--runs", type=int, default=1)
-
-    # Mission pattern selection
-    ap.add_argument(
-        "--pattern",
-        choices=["turn3pts", "square4pts"],
-        default="turn3pts",
+    common_parser.add_argument("--outdir", type=Path, default=Path("./data"))
+    common_parser.add_argument("--runs", type=int, default=1)
+    common_parser.add_argument(
+        "--home-lla",
+        type=float,
+        nargs=3,
+        metavar=("LAT", "LON", "ALT"),
+        default=(40.41176161953683, -86.93352081596879, 0.0),
     )
 
-    # Common mission parameters
-    ap.add_argument("--home-lla", type=float, nargs=3,
-    metavar=("LAT", "LON", "ALT"), default=[40.41176161953683, -86.93352081596879, 0.0],
-    help="Home position (lat lon alt)")
+    # ArduPilot defaults
+    common_parser.add_argument(
+        "--ardupilot-dir",
+        type=str,
+        default="${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot",
+    )
+    common_parser.add_argument("--ardupilot-vehicle", type=str, default="ArduCopter")
+    common_parser.add_argument("--ardupilot-frame", type=str, default="gazebo-iris")
+    common_parser.add_argument("--ardupilot-model", type=str, default="JSON")
+    common_parser.add_argument("--ardupilot-world", type=str, default="iris_runway")
+    common_parser.add_argument("--ardupilot-location", type=str, default="Purdue")
+    common_parser.add_argument("--ardupilot-mavproxy-outport", type=int, default=14551)
+    common_parser.add_argument("--ardupilot-connect-port", type=int, default=14550)
 
-    # Pattern-specific geometry knobs: 3-point turn
+    # PX4 defaults
+    common_parser.add_argument(
+        "--px4-dir",
+        type=str,
+        default="${FLIGHTSTACK_SIM_ROOT}/ap/px4",
+    )
+    common_parser.add_argument("--px4-vehicle", type=int, default=4001)
+    common_parser.add_argument("--px4-frame", type=str, default="gz_x500")
+    common_parser.add_argument("--px4-world", type=str, default="default")
+    common_parser.add_argument("--px4-location", type=str, default="Purdue")
+    common_parser.add_argument("--px4-qgc-outport", type=int, default=14550)
+    common_parser.add_argument("--px4-connect-port", type=int, default=14540)
+
+    # --------------------------------------------------------------
+    # Main parser + subparsers
+    # --------------------------------------------------------------
+    ap = argparse.ArgumentParser(description="Scenario generator (pattern-specific)")
+    subparsers = ap.add_subparsers(dest="pattern", required=True)
+
+    # -------------------------
+    # turn3pts
+    # -------------------------
+    turn3 = subparsers.add_parser(
+        "turn3pts",
+        parents=[common_parser],
+    )
+
     def parse_turn_deg(v: str):
         if v.lower() == "random":
             return "random"
         try:
             return float(v)
-        except ValueError:
+        except ValueError as e:
             raise argparse.ArgumentTypeError(
                 'turn-deg must be a float or "random"'
-            )
+            ) from e
     
-    ap.add_argument("--settle-m", type=float, default=10.0)
-    ap.add_argument("--leg1-m", type=float, default=15.0)
-    ap.add_argument("--leg2-m", type=float, default=15.0)
-    ap.add_argument("--turn-deg", type=parse_turn_deg, default="random", help='Turn angle (deg) or "random"')
-    ap.add_argument('--alt-m', type=float, default=10.0)
-    ap.add_argument('--speed-m-s', type=float, default=6.0)
-    ap.add_argument('--land', type=bool, default=True, help="Whether to land at the end of the mission")
+    turn3.add_argument("--settle-m", type=float, default=10.0)
+    turn3.add_argument("--leg1-m", type=float, default=25.0)
+    turn3.add_argument("--leg2-m", type=float, default=25.0)
+    turn3.add_argument("--turn-deg", type=parse_turn_deg, default="random", help='Turn angle (deg) or "random"')
+    turn3.add_argument('--alt-m', type=float, default=10.0)
+    turn3.add_argument('--speed-m-s', type=float, default=6.0)
+    turn3.add_argument('--land', type=bool, default=True, help="Whether to land at the end of the mission")
 
-    # # Environment configuration
-    # ap.add_argument("--location", type=str, default="Purdue")
-    ap.add_argument("--world-sdf", type=str, default="worlds/iris_runway.sdf")
-
-    # # UDP ports (offset per run)
-    ap.add_argument("--ap-port-base", type=int, default=14550)
-    ap.add_argument("--px4-port-base", type=int, default=14650)
-
-    # # PX4-specific defaults
-    ap.add_argument(
-        "--px4-dir",
-        type=str,
-        default="/home/mhcho/ws/flightstack_sim/ap/px4/PX4-Autopilot"
-    )
-    ap.add_argument("--px4-world", type=str, default="windy")
-
+    # --------------------------------------------------------------
+    # Parse CLI arguments
+    # --------------------------------------------------------------
     args = ap.parse_args()
 
     # Creating output directory (if not exists)
@@ -532,35 +520,46 @@ def main() -> int:
     # Generate runs
     # --------------------------------------------------------------
     for i in range(args.runs):
-
         run_dir = args.outdir / f"run_{i:03d}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        if args.turn_deg == "random":
-            turn_deg = np.random.uniform(0, 360)
-        else:
-            turn_deg = args.turn_deg
+        if args.pattern == "turn3pts":
+            if args.turn_deg == "random":
+                turn_deg = float(np.random.uniform(0.0, 360.0))
+            else:
+                turn_deg = float(args.turn_deg)
 
-        mission = make_turn_3pts(
-            home_position=args.home_lla,
-            settle_m=args.settle_m,
-            leg1_m=args.leg1_m,
-            leg2_m=args.leg2_m,
-            turn_deg=turn_deg,
-            alt_m=args.alt_m,
-            speed_m_s=args.speed_m_s,
-            land=args.land,
-        )
+            mission = make_turn_3pts(
+                home_position=args.home_lla,
+                settle_m=args.settle_m,
+                leg1_m=args.leg1_m,
+                leg2_m=args.leg2_m,
+                turn_deg=turn_deg,
+                alt_m=args.alt_m,
+                speed_m_s=args.speed_m_s,
+                land=args.land,
+            )
+        else:
+            raise ValueError(f"Unsupported pattern: {args.pattern}")
 
         write_scenario_yaml(
             run_dir,
             mission,
-            location="Purdue",
-            world_sdf=args.world_sdf,
-            ap_port=args.ap_port_base,
-            px4_port=args.px4_port_base,
+            ardupilot_dir=args.ardupilot_dir,
+            ardupilot_vehicle=args.ardupilot_vehicle,
+            ardupilot_frame=args.ardupilot_frame,
+            ardupilot_model=args.ardupilot_model,
+            ardupilot_world=args.ardupilot_world,
+            ardupilot_location=args.ardupilot_location,
+            ardupilot_mavproxy_outport=args.ardupilot_mavproxy_outport,
+            ardupilot_connect_port=args.ardupilot_connect_port,
             px4_dir=args.px4_dir,
+            px4_vehicle=args.px4_vehicle,
+            px4_frame=args.px4_frame,
             px4_world=args.px4_world,
+            px4_location=args.px4_location,
+            px4_qgc_outport=args.px4_qgc_outport,
+            px4_connect_port=args.px4_connect_port,
         )
 
     print(

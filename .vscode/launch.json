@@ -47,6 +47,9 @@
       "request": "launch",
       "program": "${workspaceFolder}/tools/scenario/scenario_generator.py",
       "args": [
+        "turn3pts",
+        "--outdir", "./data1",
+        "--runs", "1",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
