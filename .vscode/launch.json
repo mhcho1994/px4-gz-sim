@@ -9,7 +9,6 @@
       "program": "${workspaceFolder}/tools/launcher/run_arducopter_gz_sitl.py",
       "args": [
         "--run-root", "./data",
-        "--force",
         "--startup-delay", "2",
         "--max-run-s", "300"
       ],
@@ -29,7 +28,6 @@
       "program": "${workspaceFolder}/tools/launcher/run_px4_gz_sitl.py",
       "args": [
         "--run-root", "./data",
-        "--force",
         "--startup-delay", "2",
         "--max-run-s", "300"
       ],
@@ -48,8 +46,8 @@
       "program": "${workspaceFolder}/tools/scenario/scenario_generator.py",
       "args": [
         "turn3pts",
-        "--outdir", "./data1",
-        "--runs", "1",
+        "--outdir", "./data",
+        "--runs", "100",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -60,7 +58,7 @@
       }
     },
     {
-      "name": "Debug: pymavlink_ardupilot_commander",
+      "name": "Debug: Pymavlink_Ardupilot_Commander",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/tools/commander/pymavlink_ardupilot_commander.py",
@@ -76,12 +74,29 @@
       }
     },
     {
-      "name": "Debug: pymavlink_px4_commander",
+      "name": "Debug: Pymavlink_PX4_Commander",
       "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/tools/commander/pymavlink_px4_commander.py",
       "args": [
         "--scenario", "./data/run_000/scenario.yaml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    {
+      "name": "Debug: Converter",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "program": "${workspaceFolder}/tools/log_processing/converter.py",
+      "args": [
+        "--run-dir", "/home/mhcho/ws/data/run_000",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

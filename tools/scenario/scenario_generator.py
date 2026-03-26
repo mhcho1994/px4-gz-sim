@@ -384,7 +384,7 @@ def write_scenario_yaml(
             "ardupilot": {
                 "sim": {
                     "ardupilot_dir": ardupilot_dir,
-                    "instance": run_id,
+                    "instance": 0,
                     "vehicle": ardupilot_vehicle,
                     "frame": ardupilot_frame,
                     "model": ardupilot_model,
@@ -399,7 +399,7 @@ def write_scenario_yaml(
             "px4": {
                 "sim": {
                     "px4_dir": px4_dir,
-                    "instance": run_id,
+                    "instance": 0,
                     "vehicle": int(px4_vehicle),
                     "frame": px4_frame,
                     "world": px4_world,

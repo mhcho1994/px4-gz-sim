@@ -35,6 +35,8 @@ from tracemalloc import stop
 from typing import Any, Optional, TextIO, Tuple
 import yaml
 import math
+import shutil
+import re
 
 _THIS_FILE = Path(__file__).resolve()
 _TOOLS_DIR = _THIS_FILE.parents[1]
@@ -379,8 +381,38 @@ def find_px4_rc_script(px4_dir: Path) -> Path:
     )
 
 
-def run_sitl_cmd(px4_bin: Path) -> list[str]:
-    return [str(px4_bin)]
+def find_px4_etc(px4_dir: Path) -> Path:
+    """
+    Locate the PX4 runtime `etc` directory for SITL.
+
+    This function searches common PX4 build output locations to find
+    the `etc` directory required to run the PX4 binary.
+
+    Common locations:
+      build/px4_sitl_default/etc
+      build/px4_sitl_default/etc/
+    """
+    candidates = [
+        px4_dir / "build" / "px4_sitl_default" / "etc",
+        # Rare: nested ROMFS (older / edge cases)
+        px4_dir / "build/px4_sitl_default" / "ROMFS" / "px4fmu_common",
+    ]
+
+    for path  in candidates:
+        if path.exists() and path.is_dir():
+            return path.resolve()
+
+    searched = "\n".join(str(p) for p in candidates)
+    raise FileNotFoundError(
+        f"PX4 etc directory not found. Expected one of: \n{searched}\n"
+    )
+
+
+def run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
+    cmd = [
+        str(px4_bin)
+    ]  
+    return cmd
 
 
 def read_location_from_txt(txt_path: Path, name: str) -> Tuple[float, float, float, float]:
@@ -552,6 +584,7 @@ def run_once(
     # find PX4 built binary and startup run commands
     px4_bin = find_px4_binary(px4_dir)
     rc_script = find_px4_rc_script(px4_dir)
+    px4_etc = find_px4_etc(px4_dir)
 
     # Gazebo first
     # TODO: gazebo standalone mode
@@ -593,7 +626,7 @@ def run_once(
 
 
     # PX4 standalone SITL third
-    # TODO: px4 standalone mode
+    # TODO: px4 standalone mode with calling etc posix
     if current.get("sitl") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
@@ -625,24 +658,20 @@ def run_once(
         # add model and world sdf
         existing = px4_env.get("GZ_SIM_RESOURCE_PATH", "")
         paths = [p for p in existing.split(":") if p]
-        
-        px4_models = px4_dir / "Tools" / "simulation" / "gz" / "models"
-        px4_worlds = px4_dir / "Tools" / "simulation" / "gz" / "worlds"
+                
+        px4_models = str(px4_dir / "Tools" / "simulation" / "gz" / "models")
+        px4_worlds = str(px4_dir / "Tools" / "simulation" / "gz" / "worlds")
 
-        if px4_models not in paths and px4_worlds not in paths:
-            px4_env["GZ_SIM_RESOURCE_PATH"] = (
-                f"{px4_models}:{px4_worlds}:{existing}" if existing else str(px4_models)
-            )
-        elif px4_models not in paths and px4_worlds in paths:
-            px4_env["GZ_SIM_RESOURCE_PATH"] = (
-                f"{px4_models}:{existing}" if existing else str(px4_models)
-            )
-        elif px4_models in paths and px4_worlds not in paths:
-            px4_env["GZ_SIM_RESOURCE_PATH"] = (
-                f"{px4_worlds}:{existing}" if existing else str(px4_models)
-            )
+        new_paths = []
+        if px4_models not in paths:
+            new_paths.append(px4_models)
+        if px4_worlds not in paths:
+            new_paths.append(px4_worlds)
+        new_paths.extend(paths)
 
-        sitl = _popen("sitl", run_sitl_cmd(px4_bin), cwd=logs_dir, log_path=sitl_log, env=px4_env)
+        px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
+
+        sitl = _popen("sitl", run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir, log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl
 
     time.sleep(startup_delay_s)
@@ -694,6 +723,58 @@ def run_once(
     print('[HIT] move to next iteration')
 
     return rc
+
+
+def collect_px4_logs(px4_dir: Path, run_dir: Path):
+    """
+    Extract PX4 ULog file path from sitl.log and move it to run_dir.
+
+    This method parses the PX4 SITL stdout/stderr log (sitl.log)
+    to find the exact `.ulg` file generated during the run,
+    ensuring deterministic and race-free log collection.
+
+    Parameters
+    ----------
+    px4_dir : Path
+        PX4 repository root (contains build/px4_sitl_default).
+
+    run_dir : Path
+        Run-specific log directory containing px4_logs folder and corresponding sitl.log
+        (for example, `data/run_000`).
+    """
+    dst_root = run_dir / "px4_logs"
+    dst_root.mkdir(parents=True, exist_ok=True)
+
+    sitl_log = dst_root / "sitl.log"
+
+    if not sitl_log.exists():
+        print(f"[WARN] sitl.log not found: {sitl_log}")
+        return
+    
+    text = sitl_log.read_text(errors="ignore")
+    matches = re.findall(r"\./log/[^\s]+\.ulg", text)
+
+    if not matches:
+        print(f"[WARN] No .ulg path found in {sitl_log}")
+        return
+
+    src_root = px4_dir / "build" / "px4_sitl_default" / "rootfs"
+
+    if not src_root.exists():
+        print("[WARN] No PX4 log directory found")
+        return
+
+    rel_path = Path(matches[-1].replace("./", ""))
+    src_ulg_file = src_root / rel_path
+
+    if not src_ulg_file:
+        print("[WARN] No .ulg files found")
+        return
+
+    dst_ulg_file = dst_root / rel_path.name
+    shutil.move(str(src_ulg_file), dst_ulg_file)
+
+    print(f"[INFO] PX4 log moved: {dst_ulg_file}")
 
 
 def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
@@ -851,6 +932,9 @@ def main() -> int:
             world=cfg.world,
             location=cfg.location
         )
+
+        # Move sitl log from px4 default directory to log folder
+        collect_px4_logs(cfg.px4_dir, run_dir)
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)
 
