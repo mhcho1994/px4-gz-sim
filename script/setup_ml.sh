@@ -19,6 +19,6 @@ source venv/bin/activate
 # 3. 패키지 설치 (pip 최신화 후 설치)
 echo ">> 필수 패키지를 설치합니다..."
 pip install --upgrade pip
-pip install scikit-learn pandas numpy matplotlib pyulog pymavlink torch torchvision torchaudio
+pip install scikit-learn pandas numpy matplotlib pyulog pymavlink torch torchvision torchaudio pybinlog
 
 echo "=== 세팅이 모두 완료되었습니다! ==="

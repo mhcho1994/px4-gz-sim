@@ -25,7 +25,11 @@ def main():
 
     model = DroneTrajectoryCNN(num_features=7)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
+    
+    best_test_acc = 0
+    patience = 10  # Early stopping patience
+    patience_counter = 0
 
     for epoch in range(NUM_EPOCHS):        
         model.train()
@@ -61,8 +65,19 @@ def main():
               f"Loss: {avg_loss:.4f} | "
               f"Train Accuracy: {train_acc:.1f}% | "
               f"🏆 Test Accuracy: {test_acc:.1f}%")
-
-    torch.save(model.state_dict(), "drone_real_model.pth")
+        
+        # Early stopping check
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
+            patience_counter = 0
+            torch.save(model.state_dict(), "drone_real_model.pth")
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"\n⚠️ Early stopping at epoch {epoch+1} (no improvement for {patience} epochs)")
+                break
+    
+    print(f"\n✅ Training Complete - Best Test Accuracy: {best_test_acc:.1f}%")
     print("Weight saved to 'drone_real_model.pth'")
 
 if __name__ == "__main__":

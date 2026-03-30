@@ -72,8 +72,15 @@ def resample_and_extract_features(t, x, y, z, vx, vy, vz, t_att, yaw_att):
     flight_mask = (-z_new) > FLIGHT_THRESHOLD
     filtered_features = features[flight_mask]
     # print(f"Total data points: {len(features)}, Flight data points: {len(filtered_features)}")
+    
+    # Normalize features to [-1, 1] range for better model training
+    feature_min = np.min(filtered_features, axis=0, keepdims=True)
+    feature_max = np.max(filtered_features, axis=0, keepdims=True)
+    feature_range = feature_max - feature_min
+    feature_range[feature_range == 0] = 1  # Avoid division by zero
+    normalized_features = 2 * (filtered_features - feature_min) / feature_range - 1
 
-    return filtered_features, t_new, x_new, y_new, z_new, vx_new, vy_new, vz_new
+    return normalized_features, t_new, x_new, y_new, z_new, vx_new, vy_new, vz_new
 
 def process_px4_ulog(ulog_path):
     try:
