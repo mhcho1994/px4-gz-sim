@@ -1,0 +1,4 @@
+[submodule "PX4-Autopilot"]
+	path = ap/px4
+	url = https://github.com/mhcho1994/PX4-Autopilot.git
+	branch = v1.16.1-MOTIF
