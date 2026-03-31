@@ -8,30 +8,33 @@ from sklearn.metrics import classification_report, accuracy_score
 
 from feature_extractor import extract_from_ulog, extract_from_bin
 
-PX4_BASE_DIR = Path("../../data/px4_logs/")
-ARDU_DIR = Path("../../data/ardu_logs/") #need to fix later 
-
 def load_dataset():
     X = []
     y = []
     
     print("PX4 데이터를 불러옵니다...")
-    if os.path.exists(PX4_BASE_DIR):
-        for file in os.listdir(PX4_BASE_DIR):
-            if file.endswith('.ulg'):
-                feat = extract_from_ulog(os.path.join(PX4_BASE_DIR, file))
-                if feat is not None:
-                    X.append(feat)
-                    y.append(0)  # PX4 = 0
+    for run_idx in range(100):  # 000 to 099
+        run_str = f"{run_idx:03d}"
+        px4_dir = Path(f"../../data/run_{run_str}/px4_logs/raw")
+        if os.path.exists(px4_dir):
+            for file in os.listdir(px4_dir):
+                if file.endswith('.ulg'):
+                    feat = extract_from_ulog(os.path.join(px4_dir, file))
+                    if feat is not None:
+                        X.append(feat)
+                        y.append(0)  # PX4 = 0
                     
     print("ArduPilot 데이터를 불러옵니다...")
-    if os.path.exists(ARDU_DIR):
-        for file in os.listdir(ARDU_DIR):
-            if file.endswith('.BIN'):
-                feat = extract_from_bin(os.path.join(ARDU_DIR, file))
-                if feat is not None:
-                    X.append(feat)
-                    y.append(1)  # ArduPilot = 1
+    for run_idx in range(100):  # 000 to 099
+        run_str = f"{run_idx:03d}"
+        ardu_dir = Path(f"../../data/run_{run_str}/ardu_logs/raw/logs")
+        if os.path.exists(ardu_dir):
+            for file in os.listdir(ardu_dir):
+                if file.endswith('.BIN'):
+                    feat = extract_from_bin(os.path.join(ardu_dir, file))
+                    if feat is not None:
+                        X.append(feat)
+                        y.append(1)  # ArduPilot = 1
                     
     return np.array(X), np.array(y)
 
