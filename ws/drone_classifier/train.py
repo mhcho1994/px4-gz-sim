@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from model import DroneTrajectoryCNN
+from model import DroneTrajectoryCNN, DroneTrajectoryCNNLSTM
 from dataset import build_training_pipeline 
+import sys
 
 PX4_FOLDER = "../../data/px4_logs"
 ARDU_FOLDER = "../../data/ardu_logs"
@@ -13,7 +14,17 @@ NUM_EPOCHS = 30
 WINDOW_SIZE = 100
 STEP_SIZE = 50
 
-def main():
+def main(model_type="cnn"):
+    """
+    Train drone trajectory classification model
+    
+    Args:
+        model_type: 'cnn' (default) or 'cnn_lstm'
+    """
+    print(f"\n{'='*70}")
+    print(f"Training {model_type.upper()} Model")
+    print(f"{'='*70}\n")
+    
     train_loader, test_loader = build_training_pipeline(
         px4_dir=PX4_FOLDER, 
         ardu_dir=ARDU_FOLDER, 
@@ -23,7 +34,22 @@ def main():
         step_size=STEP_SIZE
     )
 
-    model = DroneTrajectoryCNN(num_features=7)
+    # Model selection
+    if model_type.lower() == "cnn":
+        model = DroneTrajectoryCNN(num_features=7)
+        model_name = "Pure CNN"
+    elif model_type.lower() == "cnn_lstm":
+        model = DroneTrajectoryCNNLSTM(num_features=7, lstm_hidden_size=32, num_lstm_layers=1)
+        model_name = "CNN-LSTM Hybrid"
+    else:
+        print(f"Unknown model type: {model_type}")
+        print("Available options: 'cnn', 'cnn_lstm'")
+        return
+    
+    print(f"Model: {model_name}")
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params:,}\n")
+    
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
     
@@ -70,15 +96,25 @@ def main():
         if test_acc > best_test_acc:
             best_test_acc = test_acc
             patience_counter = 0
-            torch.save(model.state_dict(), "drone_real_model.pth")
+            # Save model with type-specific filename
+            model_filename = f"drone_{model_type}.pth"
+            torch.save(model.state_dict(), model_filename)
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"\n⚠️ Early stopping at epoch {epoch+1} (no improvement for {patience} epochs)")
+                print(f"\nEarly stopping at epoch {epoch+1} (no improvement for {patience} epochs)")
                 break
     
-    print(f"\n✅ Training Complete - Best Test Accuracy: {best_test_acc:.1f}%")
-    print("Weight saved to 'drone_real_model.pth'")
+    model_filename = f"drone_{model_type}.pth"
+    print(f"\n Training Complete - Best Test Accuracy: {best_test_acc:.1f}%")
+    print(f"Weight saved to '{model_filename}'")
 
 if __name__ == "__main__":
-    main()
+    # Default: Pure CNN
+    # Usage: python train.py [cnn|cnn_lstm]
+    model_type = "cnn"
+    
+    if len(sys.argv) > 1:
+        model_type = sys.argv[1]
+    
+    main(model_type)
