@@ -439,7 +439,7 @@ def main() -> int:
     common_parser  = argparse.ArgumentParser(add_help=False)
 
     # Output settings
-    common_parser.add_argument("--outdir", type=Path, default=Path("./data"))
+    common_parser.add_argument("--outdir", type=Path, default=Path("./data/sitl_logs"))
     common_parser.add_argument("--runs", type=int, default=1)
     common_parser.add_argument(
         "--home-lla",

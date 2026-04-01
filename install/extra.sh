@@ -231,7 +231,9 @@ install_common_packages() {
     terminator \
     vim \
     libasio-dev \
-    "libqt5*-dev"
+    "libqt5*-dev" \ 
+    ros-${ROS_DISTRO}-rosbag2 \
+    ros-${ROS_DISTRO}-rosbag2-storage-mcap
 
   echo ""
   echo "==> Installing extra Python packages (pip)"

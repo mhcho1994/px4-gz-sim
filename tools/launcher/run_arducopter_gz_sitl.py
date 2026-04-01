@@ -681,7 +681,7 @@ def _should_skip_run_dir(run_dir: Path, force: bool) -> bool:
 def main() -> int:
     # Parse command-line arguments
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run-root", type=Path, default=Path("./data"), help="Root folder containing run_xxx/scenario.yaml and run_xxx/ardu_logs")
+    ap.add_argument("--run-root", type=Path, default=Path("./data/sitl_logs"), help="Root folder containing run_xxx/scenario.yaml and run_xxx/ardu_logs")
     ap.add_argument("--force", action="store_true", help="Re-run even if ardu_logs exists")
     ap.add_argument("--startup-delay-s", type=float, default=5.0)
     ap.add_argument("--max-run-s", type=float, default=60.0)

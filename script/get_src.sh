@@ -168,7 +168,7 @@ mkdir -p "$(dirname "${PX4_DIR}")" "$(dirname "${ARDUPILOT_DIR}")" "$(dirname "$
 if [[ "${WITH_PX4}" == "true" ]]; then
   if is_dir_empty "${PX4_DIR}"; then
     echo "Cloning PX4-Autopilot (${PX4_REF}) into: ${PX4_DIR}"
-    git clone -b "${PX4_REF}" --recursive "https://github.com/PX4/PX4-Autopilot.git" "${PX4_DIR}"
+    git clone -b "${PX4_REF}" --recursive "https://github.com/mhcho1994/PX4-Autopilot.git" "${PX4_DIR}"
     # align submodules again just in case (some repos have had issues with --recursive)
     align_submodules "${PX4_DIR}"
   else
