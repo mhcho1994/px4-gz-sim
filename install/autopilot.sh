@@ -4,11 +4,11 @@
 # ArduPilot workflows.
 #
 # Modes:
-#   --mode deps   : install system dependencies only
-#   --mode fetch  : verify local source trees and fetch auxiliary repositories
-#   --mode build  : build/install already-fetched sources only
-#   --mode env    : generate environment helper snippets only
-#   --mode all    : run deps + fetch + build + env (default)
+#   --phase deps   : install system dependencies only
+#   --phase fetch  : verify local source trees and fetch auxiliary repositories
+#   --phase build  : build/install already-fetched sources only
+#   --phase env    : generate environment helper snippets only
+#   --phase all    : run deps + fetch + build + env (default)
 #
 # Design goals:
 #   - Keep Docker image build and runtime setup separable
@@ -54,7 +54,7 @@ ARDUPILOT_DIR="${PROJECT_ROOT}/ap/ardupilot"
 
 # px4_msgs (ROS 2 message package)
 PX4_MSGS_REF="v1.16.1"
-PX4_MSGS_DIR="${PROJECT_ROOT}/ros2/px4_msgs_ws/src/px4_msgs"
+PX4_MSGS_DIR="${PROJECT_ROOT}/ros2/px4_msgs_ws"
 
 # Micro XRCE-DDS Agent
 DDS_MODE="ros2"   # ros2 | source
@@ -63,10 +63,14 @@ ROS2_WS_DIR="${PROJECT_ROOT}/ros2/px4_ros_uxrce_dds_ws"
 DDS_AGENT_REF=""  # auto-pick by ROS_DISTRO if empty
 DDS_AGENT_DIR="${PROJECT_ROOT}/tools/Micro-XRCE-DDS-Agent"
 
+# TODO: PX4 Gazebo models
+PX4_GZ_DIR="${PROJECT_ROOT}/gz/px4_gazebo"
+PX4_GZ_BUILD_TYPE="RelWithDebInfo"
+
 # ArduPilot Gazebo plugin + models
 GZ_VERSION="harmonic"
 ARDUPILOT_GZ_DIR="${PROJECT_ROOT}/gz/ardupilot_gazebo"
-SITL_MODELS_DIR="${PROJECT_ROOT}/gz/SITL_Models"
+ARDUPILOT_SITL_MODELS_DIR="${PROJECT_ROOT}/gz/SITL_Models"
 ARDUPILOT_GZ_BUILD_TYPE="RelWithDebInfo"
 
 # Optional: explicitly point to a Gazebo overlay setup.bash.
@@ -132,7 +136,7 @@ Options:
   --ardupilot-gz-path PATH   Where ardupilot_gazebo should live
                              (default: ${ARDUPILOT_GZ_DIR})
   --sitl-models-path PATH    Where SITL_Models should live
-                             (default: ${SITL_MODELS_DIR})
+                             (default: ${ARDUPILOT_SITL_MODELS_DIR})
   --ardupilot-gz-build-type  CMake build type for ardupilot_gazebo
                              (default: ${ARDUPILOT_GZ_BUILD_TYPE})
 
@@ -185,11 +189,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       PX4_DIR="${PROJECT_ROOT}/ap/px4"
       ARDUPILOT_DIR="${PROJECT_ROOT}/ap/ardupilot"
-      PX4_MSGS_DIR="${PROJECT_ROOT}/ros2/px4_msgs_ws/src/px4_msgs"
+      PX4_MSGS_DIR="${PROJECT_ROOT}/ros2/px4_msgs_ws"
       ROS2_WS_DIR="${PROJECT_ROOT}/ros2/px4_ros_uxrce_dds_ws"
       DDS_AGENT_DIR="${PROJECT_ROOT}/tools/Micro-XRCE-DDS-Agent"
       ARDUPILOT_GZ_DIR="${PROJECT_ROOT}/gz/ardupilot_gazebo"
-      SITL_MODELS_DIR="${PROJECT_ROOT}/gz/SITL_Models"
+      ARDUPILOT_SITL_MODELS_DIR="${PROJECT_ROOT}/gz/SITL_Models"
       ;;
 
     # package installation selection
@@ -220,7 +224,7 @@ while [[ $# -gt 0 ]]; do
     --gz-version) [[ $# -ge 2 ]] || die "--gz-version requires a value"; GZ_VERSION="$2"; shift 2 ;;
     --gz-overlay-setup) [[ $# -ge 2 ]] || die "--gz-overlay-setup requires a path"; GZ_OVERLAY_SETUP="$2"; shift 2 ;;
     --ardupilot-gz-path) [[ $# -ge 2 ]] || die "--ardupilot-gz-path requires a path"; ARDUPILOT_GZ_DIR="$2"; shift 2 ;;
-    --sitl-models-path) [[ $# -ge 2 ]] || die "--sitl-models-path requires a path"; SITL_MODELS_DIR="$2"; shift 2 ;;
+    --sitl-models-path) [[ $# -ge 2 ]] || die "--sitl-models-path requires a path"; ARDUPILOT_SITL_MODELS_DIR="$2"; shift 2 ;;
     --ardupilot-gz-build-type) [[ $# -ge 2 ]] || die "--ardupilot-gz-build-type requires a value"; ARDUPILOT_GZ_BUILD_TYPE="$2"; shift 2 ;;
 
     *) die "Unknown option: $1 (use --help)" ;;
@@ -339,7 +343,7 @@ print_config() {
   echo "ARDUPILOT_REF=${ARDUPILOT_REF}"
   echo "ARDUPILOT_DIR=${ARDUPILOT_DIR}"
   echo "ARDUPILOT_GZ_DIR=${ARDUPILOT_GZ_DIR}"
-  echo "SITL_MODELS_DIR=${SITL_MODELS_DIR}"
+  echo "ARDUPILOT_SITL_MODELS_DIR=${ARDUPILOT_SITL_MODELS_DIR}"
   echo "GZ_VERSION=${GZ_VERSION}"
 }
 
@@ -443,7 +447,7 @@ ardupilot_env() {
 }
 
 # --------------------------
-# px4_msgs: fetch
+# px4_msgs: fetch / build / env
 # --------------------------
 px4_msgs_fetch() {
   if [[ "${WITH_PX4_MSGS}" != "true" ]]; then
@@ -456,13 +460,54 @@ px4_msgs_fetch() {
   echo ""
   echo "==> Fetching px4_msgs source"
   echo "    ref=${PX4_MSGS_REF}"
-  echo "    dir=${PX4_MSGS_DIR}"
+  echo "    dir=${PX4_MSGS_DIR}/src/px4_msgs"
   echo ""
 
   ensure_git_repo_or_clone \
     "https://github.com/PX4/px4_msgs.git" \
     "${PX4_MSGS_REF}" \
-    "${PX4_MSGS_DIR}"
+    "${PX4_MSGS_DIR}/src/px4_msgs"
+}
+
+px4_msgs_build() {
+
+  if [[ "${WITH_PX4_MSGS}" != "true" ]]; then
+    echo ""
+    echo "==> px4_msgs disabled (--no-px4-msgs)"
+    echo ""
+    return 0
+  fi
+
+  echo ""
+  echo "==> Building px4_msgs in ROS 2 workspace"
+  echo ""
+
+  local ros_setup="/opt/ros/${ROS_DISTRO}/setup.bash"
+  [[ -f "${ros_setup}" ]] || die "ROS 2 setup not found: ${ros_setup} (install ROS 2 ${ROS_DISTRO} first)"
+
+  sudo rosdep init 2>/dev/null || true
+  rosdep update
+
+  local src_dir="${PX4_MSGS_DIR}/src"
+  [[ -d "${src_dir}/px4_msgs" ]] || die "px4_msgs source not found. Run --phase fetch first."
+
+  set +u
+  source "${ros_setup}"
+  set -u
+
+  cd "${PX4_MSGS_DIR}"
+  rosdep install -r --from-paths src -i -y --rosdistro "${ROS_DISTRO}" || true
+  colcon build
+}
+
+px4_msgs_env() {
+  echo ""
+  echo "==> px4_msgs env stage"
+  echo ""
+
+  echo "px4_msgs built in ROS 2 workspace:"
+  echo "  source /opt/ros/${ROS_DISTRO}/setup.bash"
+  echo "  source ${PX4_MSGS_DIR}/install/local_setup.bash"
 }
 
 # --------------------------
@@ -531,7 +576,7 @@ dds_build_ros2_ws() {
   rosdep update
 
   local src_dir="${ROS2_WS_DIR}/src"
-  [[ -d "${src_dir}/Micro-XRCE-DDS-Agent" ]] || die "DDS source not found. Run --mode fetch first."
+  [[ -d "${src_dir}/Micro-XRCE-DDS-Agent" ]] || die "DDS source not found. Run --phase fetch first."
 
   set +u
   source "${ros_setup}"
@@ -547,7 +592,7 @@ dds_build_source() {
   echo "==> Building/installing Micro XRCE-DDS Agent to /usr/local"
   echo ""
 
-  [[ -d "${DDS_AGENT_DIR}" ]] || die "DDS source not found at ${DDS_AGENT_DIR}. Run --mode fetch first."
+  [[ -d "${DDS_AGENT_DIR}" ]] || die "DDS source not found at ${DDS_AGENT_DIR}. Run --phase fetch first."
 
   pushd "${DDS_AGENT_DIR}" >/dev/null
   mkdir -p build
@@ -640,7 +685,7 @@ sitl_models_fetch() {
   ensure_git_repo_or_clone \
     "https://github.com/mhcho1994/SITL_Models" \
     "master" \
-    "${SITL_MODELS_DIR}"
+    "${ARDUPILOT_SITL_MODELS_DIR}"
 }
 
 ardupilot_gz_plugin_build() {
@@ -648,7 +693,7 @@ ardupilot_gz_plugin_build() {
   echo "==> Building ArduPilot Gazebo plugin"
   echo ""
 
-  [[ -d "${ARDUPILOT_GZ_DIR}" ]] || die "ardupilot_gazebo source not found. Run --mode fetch first."
+  [[ -d "${ARDUPILOT_GZ_DIR}" ]] || die "ardupilot_gazebo source not found. Run --phase fetch first."
 
   mkdir -p "${ARDUPILOT_GZ_DIR}/build"
   pushd "${ARDUPILOT_GZ_DIR}/build" >/dev/null
@@ -673,19 +718,22 @@ ardupilot_gz_plugin_build() {
 }
 
 ardupilot_gz_plugin_env() {
-  local env_file="${PROJECT_ROOT}/gz/ardupilot_gz_env.sh"
-  mkdir -p "$(dirname "${env_file}")"
+  local env_dir="${PROJECT_ROOT}/gz/env"
+  local env_file="${env_dir}/ardupilot_gz_env.sh"
+
+  mkdir -p "${env_dir}"
 
   cat > "${env_file}" <<EOF
-# Generated by install/autopilot.sh
+#!/usr/bin/env bash
+# Auto-generated by install/autopilot.sh
 # Source this file to expose ArduPilot Gazebo plugin and resource paths.
 
 export GZ_VERSION=${GZ_VERSION}
 export GZ_SIM_SYSTEM_PLUGIN_PATH=${ARDUPILOT_GZ_DIR}/build:\${GZ_SIM_SYSTEM_PLUGIN_PATH}
 export GZ_SIM_RESOURCE_PATH=${ARDUPILOT_GZ_DIR}/models:${ARDUPILOT_GZ_DIR}/worlds:\${GZ_SIM_RESOURCE_PATH}
 
-if [ -d "${SITL_MODELS_DIR}/Gazebo" ]; then
-  export GZ_SIM_RESOURCE_PATH=${SITL_MODELS_DIR}/Gazebo:\${GZ_SIM_RESOURCE_PATH}
+if [ -d "${ARDUPILOT_SITL_MODELS_DIR}/Gazebo" ]; then
+  export GZ_SIM_RESOURCE_PATH=${ARDUPILOT_SITL_MODELS_DIR}/Gazebo:\${GZ_SIM_RESOURCE_PATH}
 fi
 EOF
 
@@ -714,10 +762,12 @@ if [[ "${WITH_PX4}" == "true" ]]; then
     build)
       px4_build
       dds_build
+      px4_msgs_build
       ;;
     env)
       px4_env
       dds_env
+      px4_msgs_env
       ;;
     all)
       px4_deps
@@ -727,8 +777,10 @@ if [[ "${WITH_PX4}" == "true" ]]; then
       dds_fetch
       px4_build
       dds_build
+      px4_msgs_build
       px4_env
       dds_env
+      px4_msgs_env
       ;;
   esac
 fi

@@ -96,12 +96,9 @@ main() {
     # Install required dependencies and packages
     run_script "$PROJECT_ROOT/install/base.sh"
     run_script "$PROJECT_ROOT/install/ros2.sh" --ros-distro humble
-    run_script "$PROJECT_ROOT/install/gazebo.sh" --install binary
-    run_script "$PROJECT_ROOT/install/autopilot.sh" --with-ardupilot
-    run_script "$PROJECT_ROOT/install/extra.sh"
-
-    # Get source
-    run_script "$PROJECT_ROOT/script/get_src.sh --with-ardupilot"
+    run_script "$PROJECT_ROOT/install/gazebo.sh" --install binary --phase all
+    run_script "$PROJECT_ROOT/install/autopilot.sh" --with-ardupilot --phase all
+    run_script "$PROJECT_ROOT/install/extra.sh" --phase all
 
     # Optional cleanup
     run_script "$PROJECT_ROOT/install/clean.sh"

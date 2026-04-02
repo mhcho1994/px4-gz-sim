@@ -104,6 +104,19 @@ ensure_dir() {
     fi
 }
 
+run_script() {
+    local script_path="$1"
+    shift
+    require_file "$script_path"
+
+    log "Preparing script: $script_path"
+    sudo chown "$CURRENT_USER:$CURRENT_USER" "$script_path"
+    sudo chmod +x "$script_path"
+
+    log "Running script: $script_path $*"
+    bash "$script_path" "$@"
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -185,6 +198,9 @@ check_prereqs() {
 
 prepare_host_dirs() {
     log "Preparing host directories under project root"
+
+    run_script "$PROJECT_ROOT/install/gazebo.sh" --install binary ??
+
     ensure_dir "$PROJECT_ROOT/data"
     ensure_dir "$PROJECT_ROOT/ws"
     ensure_dir "$PROJECT_ROOT/ros2"

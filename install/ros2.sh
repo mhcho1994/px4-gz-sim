@@ -13,8 +13,9 @@
 # --------------------------
 # Defaults
 # --------------------------
-DEBUG="false"       # --debug
-DO_UPGRADE="false"  # --upgrade
+DEBUG="false"           # debug flat
+DO_UPGRADE="false"      # upgrade flag (not recommended for reproducibility)
+
 ROS_VERSION="humble"
 
 help() {

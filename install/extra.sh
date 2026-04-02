@@ -1,38 +1,44 @@
 #!/usr/bin/env bash
 # extra.sh — install extra dev/tools + GeographicLib datasets + QGroundControl prereqs
 #
-# Modes:
-#   --mode deps   : install system dependencies only
-#   --mode setup  : run runtime/user setup only
-#   --mode all    : run both (default)
+# Phases:
+#   --phase deps   : install system/package dependencies only
+#   --phase fetch  : download external artifacts only
+#   --phase env    : run runtime/user environment setup only
+#   --phase all    : run deps + env + fetch (default)
+#
+# Intended workflow:
+#   - Before docker build: fetch
+#   - During docker image build: deps
+#   - After entering container / runtime host setup: env
 #
 # Features:
 #  - help
 #  - debug enables `set -x`
-#  - Installs common utilities + Python deps
-#  - Installs MAVROS GeographicLib datasets
-#  - Installs QGroundControl prerequisites
-#  - Optionally downloads QGroundControl AppImage
-#  - Ensures NumPy version is compatible with MAVProxy (numpy<2)
+#  - installs common utilities + Python deps
+#  - installs MAVROS GeographicLib datasets
+#  - installs QGroundControl prerequisites
+#  - optionally downloads QGroundControl AppImage
+#  - ensures NumPy version is compatible with MAVProxy (numpy<2)
 #
 # Notes:
 #  - We intentionally do NOT run `apt-get upgrade` by default to preserve reproducibility.
 #    Use --upgrade if you really want it.
 #  - QGC may require logout/login after adding user to dialout group.
-#  - In Docker image build, user/group changes may be less useful than in runtime containers.
+#  - In Docker image build, user/group changes are generally less useful than in runtime containers.
 #  - MAVProxy itself is assumed to be installed elsewhere (e.g. autopilot.sh for ArduPilot deps).
-#    This script only checks/fixes NumPy compatibility for MAVProxy.
+#    This script only checks/fixes NumPy compatibility for MAVProxy-related usage.
 
 # --------------------------
 # Defaults
 # --------------------------
 DEBUG="false"                                 # --debug
-MODE="all"                                    # deps | setup | all
+PHASE="all"                                   # deps | fetch | env | all
 DO_UPGRADE="false"                            # --upgrade
 INSTALL_QGC="true"                            # --no-qgc
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$THIS_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "${THIS_DIR}/.." && pwd)"
 
 QGC_DIR="${PROJECT_ROOT}/tools/QGC"
 QGC_URL="https://d176tv9ibo4jno.cloudfront.net/latest/QGroundControl-x86_64.AppImage"
@@ -51,17 +57,20 @@ Options:
   -h, --help            Show this help and exit (no command tracing)
   --debug               Enable command tracing (set -x)
 
-  --mode MODE           What to run: deps | setup | all (default: ${MODE})
+  --phase PHASE         What to run: deps | fetch | env | all
+                        (default: ${PHASE})
                         deps  = install apt/pip/system dependencies only
-                        setup = runtime/user setup only
-                        all   = run both
+                        fetch = download external artifacts only
+                        env   = runtime/user environment setup only
+                        all   = run deps + env + fetch
 
   --upgrade             Run apt-get upgrade (default: off)
   --no-qgc              Skip QGroundControl prerequisites + AppImage download
 
   --project-root PATH   Project root (default: ${PROJECT_ROOT})
   --qgc-dir PATH        Where to put QGC AppImage (default: ${QGC_DIR})
-  --qgc-url URL         Optional direct URL to QGroundControl AppImage (default: ${QGC_URL})
+  --qgc-url URL         Direct URL to QGroundControl AppImage
+                        (default: ${QGC_URL})
 
   --no-mavproxy-numpy-fix
                         Skip NumPy compatibility check/fix for MAVProxy
@@ -72,22 +81,19 @@ Options:
 
 Examples:
   # Dockerfile: dependencies only
-  bash extra.sh --mode deps
+  bash extra.sh --phase deps
 
-  # Runtime in container: QGC setup only
-  bash extra.sh --mode setup
+  # Download QGC before docker build
+  bash extra.sh --phase fetch
+
+  # Runtime in container: user/group setup only
+  bash extra.sh --phase env
 
   # Full install
-  bash extra.sh --mode all
+  bash extra.sh --phase all
 
   # Explicit project root
   bash extra.sh --project-root /home/user/ws/flightstack_sim
-
-  # Force NumPy below 2 for MAVProxy
-  bash extra.sh --mode deps --mavproxy-numpy "numpy<2"
-
-  # System-wide NumPy fix
-  bash extra.sh --mode deps --mavproxy-scope system
 EOF
 }
 
@@ -97,22 +103,37 @@ die() {
 }
 
 # Prevent sourcing
-(return 0 2>/dev/null) && { echo "Do not source this script. Run: bash $0" >&2; return 1; }
+(return 0 2>/dev/null) && {
+  echo "Do not source this script. Run: bash $0" >&2
+  return 1
+}
 
 # --------------------------
 # Parse args (before set -x)
 # --------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help) help; exit 0 ;;
-    --debug) DEBUG="true"; shift ;;
-    --mode)
-      [[ $# -ge 2 ]] || die "--mode requires a value (deps|setup|all)"
-      MODE="$2"
+    -h|--help)
+      help
+      exit 0
+      ;;
+    --debug)
+      DEBUG="true"
+      shift
+      ;;
+    --phase)
+      [[ $# -ge 2 ]] || die "--phase requires a value (deps|fetch|env|all)"
+      PHASE="$2"
       shift 2
       ;;
-    --upgrade) DO_UPGRADE="true"; shift ;;
-    --no-qgc) INSTALL_QGC="false"; shift ;;
+    --upgrade)
+      DO_UPGRADE="true"
+      shift
+      ;;
+    --no-qgc)
+      INSTALL_QGC="false"
+      shift
+      ;;
     --project-root)
       [[ $# -ge 2 ]] || die "--project-root requires a path"
       PROJECT_ROOT="$2"
@@ -152,9 +173,12 @@ done
 # --------------------------
 # Validate
 # --------------------------
-if [[ "${MODE}" != "deps" && "${MODE}" != "setup" && "${MODE}" != "all" ]]; then
-  die "Invalid --mode: ${MODE} (expected: deps|setup|all)"
-fi
+case "${PHASE}" in
+  deps|fetch|env|all) ;;
+  *)
+    die "Invalid --phase: ${PHASE} (expected: deps|fetch|env|all)"
+    ;;
+esac
 
 if [[ "${MAVPROXY_INSTALL_SCOPE}" != "user" && "${MAVPROXY_INSTALL_SCOPE}" != "system" ]]; then
   die "Invalid --mavproxy-scope: ${MAVPROXY_INSTALL_SCOPE} (expected: user|system)"
@@ -165,6 +189,7 @@ fi
 # --------------------------
 set -Eeuo pipefail
 trap 'echo "[extra.sh] ERROR line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
+
 if [[ "${DEBUG}" == "true" ]]; then
   set -x
 fi
@@ -206,8 +231,9 @@ PY
 }
 
 # --------------------------
-# Deps: common packages
+# Phase: deps
 # --------------------------
+# deps: common packages + tools + Python deps
 install_common_packages() {
   echo ""
   echo "==> Installing extra tools/dependencies (apt)"
@@ -242,9 +268,7 @@ install_common_packages() {
   python3 -m pip install pykwalify
 }
 
-# --------------------------
-# Deps: GeographicLib datasets
-# --------------------------
+# deps: GeographicLib datasets
 install_geographiclib_datasets() {
   echo ""
   echo "==> Installing MAVROS GeographicLib datasets"
@@ -256,9 +280,7 @@ install_geographiclib_datasets() {
   rm -f "${tmp}"
 }
 
-# --------------------------
-# Deps: QGC system prerequisites only
-# --------------------------
+# deps: QGC system prerequisites only
 install_qgc_prereqs() {
   if [[ "${INSTALL_QGC}" != "true" ]]; then
     echo "==> Skipping QGroundControl prerequisites (--no-qgc)"
@@ -282,9 +304,7 @@ install_qgc_prereqs() {
     libxcb-cursor-dev
 }
 
-# --------------------------
-# Deps: ensure NumPy compatibility for MAVProxy
-# --------------------------
+# deps: ensure NumPy compatibility for MAVProxy
 ensure_numpy_for_mavproxy() {
   if [[ "${INSTALL_MAVPROXY_NUMPY_FIX}" != "true" ]]; then
     echo "==> Skipping MAVProxy NumPy compatibility fix (--no-mavproxy-numpy-fix)"
@@ -367,34 +387,11 @@ PY
   echo ""
 }
 
-# --------------------------
-# Setup: user-level QGC permissions
-# --------------------------
-setup_qgc_user_access() {
-  if [[ "${INSTALL_QGC}" != "true" ]]; then
-    echo "==> Skipping QGroundControl user setup (--no-qgc)"
-    return 0
-  fi
-
-  echo ""
-  echo "==> Configuring QGroundControl user access"
-  echo ""
-
-  if [[ -n "${USER:-}" ]]; then
-    sudo usermod -a -G dialout "${USER}" || true
-    echo "Added user '${USER}' to dialout group (best-effort)."
-  else
-    echo "WARNING: USER is not set; skipping dialout group update."
-  fi
-
-  echo ""
-  echo "IMPORTANT: You may need logout/login (or a new shell/session) for dialout group changes to take effect."
-  echo ""
-}
 
 # --------------------------
-# Setup: QGC AppImage download
+# Phase: fetch
 # --------------------------
+# fetch: download QGC AppImage
 download_qgc_appimage() {
   if [[ "${INSTALL_QGC}" != "true" ]]; then
     echo "==> Skipping QGroundControl AppImage download (--no-qgc)"
@@ -424,10 +421,36 @@ download_qgc_appimage() {
 }
 
 # --------------------------
+# Phase: env
+# --------------------------
+# env: QGroundControl user access setup (dialout group)
+setup_qgc_user_access() {
+  if [[ "${INSTALL_QGC}" != "true" ]]; then
+    echo "==> Skipping QGroundControl user setup (--no-qgc)"
+    return 0
+  fi
+
+  echo ""
+  echo "==> Configuring QGroundControl user access"
+  echo ""
+
+  if [[ -n "${USER:-}" ]]; then
+    sudo usermod -a -G dialout "${USER}" || true
+    echo "Added user '${USER}' to dialout group (best-effort)."
+  else
+    echo "WARNING: USER is not set; skipping dialout group update."
+  fi
+
+  echo ""
+  echo "IMPORTANT: You may need logout/login (or a new shell/session) for dialout group changes to take effect."
+  echo ""
+}
+
+# --------------------------
 # Main
 # --------------------------
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
-echo "MODE=${MODE}"
+echo "PHASE=${PHASE}"
 echo "DO_UPGRADE=${DO_UPGRADE}"
 echo "INSTALL_QGC=${INSTALL_QGC}"
 echo "QGC_DIR=${QGC_DIR}"
@@ -436,7 +459,7 @@ echo "INSTALL_MAVPROXY_NUMPY_FIX=${INSTALL_MAVPROXY_NUMPY_FIX}"
 echo "MAVPROXY_INSTALL_SCOPE=${MAVPROXY_INSTALL_SCOPE}"
 echo "MAVPROXY_NUMPY_SPEC=${MAVPROXY_NUMPY_SPEC}"
 
-case "${MODE}" in
+case "${PHASE}" in
   deps)
     install_common_packages
     install_geographiclib_datasets
@@ -444,9 +467,11 @@ case "${MODE}" in
     ensure_numpy_for_mavproxy
     verify_numpy_for_mavproxy
     ;;
-  setup)
-    setup_qgc_user_access
+  fetch)
     download_qgc_appimage
+    ;;
+  env)
+    setup_qgc_user_access
     ;;
   all)
     install_common_packages
@@ -460,4 +485,4 @@ case "${MODE}" in
 esac
 
 echo ""
-echo "Extra packages installation DONE. MODE=${MODE}"
+echo "Extra packages installation DONE. PHASE=${PHASE}"
