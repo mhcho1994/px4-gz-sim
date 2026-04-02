@@ -257,7 +257,17 @@ install_common_packages() {
     terminator \
     vim \
     libasio-dev \
-    "libqt5*-dev" \ 
+    qtbase5-dev \
+    qtbase5-dev-tools \
+    qtchooser \
+    qt5-qmake \
+    libqt5opengl5-dev \
+    libqt5svg5-dev \
+    qml-module-qtquick2 \
+    qml-module-qtquick-controls \
+    qml-module-qtquick-controls2 \
+    qml-module-qtquick-layouts \
+    qml-module-qtgraphicaleffects \
     ros-${ROS_DISTRO}-rosbag2 \
     ros-${ROS_DISTRO}-rosbag2-storage-mcap
 
