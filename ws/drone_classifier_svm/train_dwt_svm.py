@@ -14,7 +14,7 @@ import matplotlib
 # WSL 환경 등 디스플레이가 없는 경우를 위한 백엔드 설정
 matplotlib.use('Agg')
 
-from signal_processor import process_px4_for_wavelet, process_ardu_for_wavelet
+from signal_processor import process_px4_for_wavelet, process_ardu_for_wavelet, process_rosbag_for_wavelet
 
 def load_timeseries_dataset():
     BASE_DATA_DIR = Path("data") 
@@ -30,7 +30,7 @@ def load_timeseries_dataset():
     print("[Info] Loading PX4 timeseries data (Turn Segments)...")
     for i in range(100): 
         run_folder = f"run_{i:03d}" 
-        px4_dir = BASE_DATA_DIR / run_folder / "px4_logs" / "raw"
+        px4_dir = BASE_DATA_DIR / "sitl_logs" / run_folder / "px4_logs" / "raw"
         
         if px4_dir.exists():
             for file in os.listdir(px4_dir):
@@ -48,7 +48,7 @@ def load_timeseries_dataset():
     print("[Info] Loading ArduPilot timeseries data (Turn Segments)...")
     for i in range(100):
         run_folder = f"run_{i:03d}"
-        ardu_dir = BASE_DATA_DIR / run_folder / "ardu_logs" / "raw" / "logs"
+        ardu_dir = BASE_DATA_DIR / "sitl_logs" / run_folder / "ardu_logs" / "raw" / "logs"
         
         if ardu_dir.exists():
             for file in os.listdir(ardu_dir):
@@ -63,6 +63,24 @@ def load_timeseries_dataset():
                             y.append(1)  # Class 1: ArduPilot
                     break
                     
+    print("[Info] Loading real ArduPilot timeseries data (Turn Segments)...")
+    for i in range(1):
+        run_folder = f"run_{i:03d}"
+        ardu_dir = BASE_DATA_DIR / "flight_logs" / run_folder / "ardu_logs" / "processed"
+        
+        if ardu_dir.exists():
+            for file in os.listdir(ardu_dir):
+                if file.lower().endswith('.csv'):
+                    ardu_result = process_rosbag_for_wavelet(str(ardu_dir / file))
+                    if ardu_result[0] is not None:
+                        _, _, _, _, turn_segments, _ = ardu_result
+                        if turn_segments and len(turn_segments) > 0:
+                            _, feat_turn = turn_segments[0]
+                            selected_features = feat_turn[:, target_indices]
+                            X_timeseries.append(selected_features) 
+                            y.append(1)  # Class 1: ArduPilot
+                    break
+
     return X_timeseries, np.array(y)
 
 def extract_dwt_features(timeseries_matrix, waveletname='db4', level=3):
@@ -166,7 +184,8 @@ def main():
     X_dwt = np.array(X_dwt)
     print(f"[Success] Extraction complete! DWT Feature Matrix Shape: {X_dwt.shape}")
     
-    X_train, X_test, y_train, y_test = train_test_split(X_dwt, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X_dwt[0:192], y[0:192], test_size=0.2, random_state=42)
+
     
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
@@ -177,6 +196,9 @@ def main():
     model.fit(X_train_scaled, y_train)
     
     y_pred = model.predict(X_test_scaled)
+
+    X_valid_scaled = scaler.transform(X_dwt[192:])
+    y_valid_pred = model.predict(X_valid_scaled)
     
     print("\n================ Classification Results ================")
     print(f"Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%")

@@ -256,6 +256,28 @@ def process_ardu_for_wavelet(bin_path):
         print(f"[ArduPilot Extract Error] {bin_path}: {e}")
         return None, None, None, None, None, None
 
+def process_rosbag_for_wavelet(csv_path):
+    try:
+        data = np.genfromtxt(csv_path, delimiter=',', names=True)
+        t_loc = data['bag_time_ns'] / 1e9
+        x, y, z = data['x'], data['y'], data['z']
+        vx, vy, vz = data['vx'], data['vy'], data['vz']
+        
+        extracted = extract_wavelet_features(t_loc, x, y, z, vx, vy, vz)
+        if extracted is None: return None, None, None, None, None, None
+        
+        t_full, feat_full = extracted
+        turn_segments, spans = extract_turn_segments(t_full, feat_full)
+        
+        # X, Y 원본 데이터도 함께 반환
+        return x, y, t_full, feat_full, turn_segments, spans
+        
+    except Exception as e:
+        print(f"[ROS Bag Extract Error] {csv_path}: {e}")
+        return None, None, None, None, None, None
+
+
+
 # =====================================================================
 # 플롯 1: 전체 궤적 + 색칠된 구역 (라인 색상 지정 추가)
 # =====================================================================

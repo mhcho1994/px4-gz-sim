@@ -123,5 +123,23 @@
         "PYTHONUNBUFFERED": "1"
       }
     },
+    {
+      "name": "Debug: SVM Test",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "program": "${workspaceFolder}/ws/drone_classifier_svm/train_dwt_svm.py",
+      "args": [
+        "--ardu-logs-dir", "${workspaceFolder}/data/flight_logs/ardu_logs",
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+
   ]
 }

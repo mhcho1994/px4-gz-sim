@@ -839,7 +839,7 @@ def _should_skip_run_dir(run_dir: Path, force: bool) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run-root", type=Path, default=Path("./data"), help="Root folder containing run_xxx/scenario.yaml")
+    ap.add_argument("--run-root", type=Path, default=Path("./data/sitl_logs"), help="Root folder containing run_xxx/scenario.yaml")
     ap.add_argument("--force", action="store_true", help="Re-run even if px4_logs already exist")
     ap.add_argument("--startup-delay-s", type=float, default=5.0)
     ap.add_argument("--max-run-s", type=float, default=60.0)
