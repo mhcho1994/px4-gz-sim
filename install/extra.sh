@@ -230,6 +230,20 @@ except Exception:
 PY
 }
 
+detect_ros_distro() {
+  if [[ -n "${ROS_DISTRO:-}" ]]; then
+    echo "${ROS_DISTRO}"
+    return
+  fi
+
+  local ros_dirs=(/opt/ros/*)
+  if [[ -d "${ros_dirs[0]}" ]]; then
+    basename "${ros_dirs[0]}"
+  else
+    echo "humble"  # fallback
+  fi
+}
+
 # --------------------------
 # Phase: deps
 # --------------------------
@@ -268,8 +282,8 @@ install_common_packages() {
     qml-module-qtquick-controls2 \
     qml-module-qtquick-layouts \
     qml-module-qtgraphicaleffects \
-    ros-${ROS_DISTRO}-rosbag2 \
-    ros-${ROS_DISTRO}-rosbag2-storage-mcap
+    ros-$(detect_ros_distro)-rosbag2 \
+    ros-$(detect_ros_distro)-rosbag2-storage-mcap
 
   echo ""
   echo "==> Installing extra Python packages (pip)"
