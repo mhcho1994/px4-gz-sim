@@ -685,6 +685,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="Re-run even if ardu_logs exists")
     ap.add_argument("--startup-delay-s", type=float, default=5.0)
     ap.add_argument("--max-run-s", type=float, default=60.0)
+    ap.add_argument("--max-retries", type=int, default=3, help="Number of retries for failed runs (0 for no retries)")
     args = ap.parse_args()
 
     # Access to the resolved run root path
@@ -738,7 +739,7 @@ def main() -> int:
             continue
 
         # Create output directory for this run
-        logs_root = run_dir / "ardu_logs"
+        logs_root = run_dir / "ardu_logs" / "raw"
         logs_root.mkdir(parents=True, exist_ok=True)
 
         # Get scenario path

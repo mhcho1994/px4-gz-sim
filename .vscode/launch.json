@@ -8,8 +8,8 @@
       "program": "${workspaceFolder}/tools/scenario/scenario_generator.py",
       "args": [
         "turn3pts",
-        "--outdir", "./data/sitl_logs",
-        "--runs", "100",
+        "--outdir", "${workspaceFolder}/data/sitl_logs",
+        "--runs", "1",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -26,9 +26,10 @@
       "python": "/usr/bin/python3",
       "program": "${workspaceFolder}/tools/launcher/run_px4_gz_sitl.py",
       "args": [
-        "--run-root", "./data/sitl_logs",
+        "--run-root", "${workspaceFolder}/data/sitl_logs",
         "--startup-delay", "2",
-        "--max-run-s", "300"
+        "--max-run-s", "300",
+        "--force"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -45,7 +46,7 @@
       "python": "/usr/bin/python3",
       "program": "${workspaceFolder}/tools/launcher/run_arducopter_gz_sitl.py",
       "args": [
-        "--run-root", "./data/sitl_logs",
+        "--run-root", "${workspaceFolder}/data/sitl_logs",
         "--startup-delay", "2",
         "--max-run-s", "300"
       ],
@@ -63,7 +64,7 @@
       "request": "launch",
       "program": "${workspaceFolder}/tools/commander/pymavlink_px4_commander.py",
       "args": [
-        "--scenario", "./data/run_000/scenario.yaml"
+        "--scenario", "${workspaceFolder}/data/sitl_logs/run_000/scenario.yaml"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -79,7 +80,7 @@
       "request": "launch",
       "program": "${workspaceFolder}/tools/commander/pymavlink_ardupilot_commander.py",
       "args": [
-        "--scenario", "./data/run_000/scenario.yaml"
+        "--scenario", "${workspaceFolder}/data/sitl_logs/run_000/scenario.yaml"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -96,7 +97,7 @@
       "python": "${workspaceFolder}/.venv/bin/python",
       "program": "${workspaceFolder}/tools/log_processing/sitl_log_converter.py",
       "args": [
-        "--run-dir", "/home/mhcho/ws/data/run_000",
+        "--run-dir", "${workspaceFolder}/data/sitl_logs/run_000",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

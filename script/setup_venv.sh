@@ -42,7 +42,7 @@ fi
 # Step 2: Activate the virtual environment
 # ------------------------------------------------------------------------------
 echo ">> Activating virtual environment..."
-source venv/bin/activate
+source .venv/bin/activate
 
 # ------------------------------------------------------------------------------
 # Step 3: Install required Python packages
@@ -54,9 +54,21 @@ echo ">> Installing required packages..."
 # Upgrade pip to avoid compatibility issues
 pip install --upgrade pip
 
-######################
+#            - Log parsing (pyulog, pybinlog)
+#            - Configuration handling (pyyaml)
+#            - Mavlink handling (pymavlink)
+#            - Data processing (pandas, numpy)
+#            - Visualization (matplotlib)
+#            - Classical ML (scikit-learn)
+#            - Deep learning (torch, torchvision, torchaudio)
 
-# Core ML + data processing + visualization + flight log tools + DL stack
+
+# Log parsing, scenario parsing and mavlink handling
+pip install pyulog pybinlog pymavlink
+
+
+
+
 pip install scikit-learn pandas numpy matplotlib pyulog pymavlink torch torchvision torchaudio
 
 # YAML parser for scenario/config handling

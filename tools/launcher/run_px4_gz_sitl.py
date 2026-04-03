@@ -742,7 +742,7 @@ def collect_px4_logs(px4_dir: Path, run_dir: Path):
         Run-specific log directory containing px4_logs folder and corresponding sitl.log
         (for example, `data/run_000`).
     """
-    dst_root = run_dir / "px4_logs"
+    dst_root = run_dir / "px4_logs" / "raw"
     dst_root.mkdir(parents=True, exist_ok=True)
 
     sitl_log = dst_root / "sitl.log"
@@ -894,7 +894,7 @@ def main() -> int:
             continue
 
         # Create output directory for this run
-        logs_root = run_dir / "px4_logs"
+        logs_root = run_dir / "px4_logs" / "raw"
         logs_root.mkdir(parents=True, exist_ok=True)
 
         # Get scenario path
