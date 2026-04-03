@@ -410,7 +410,7 @@ def find_px4_etc(px4_dir: Path) -> Path:
 
 def run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
     cmd = [
-        "make", "px4_sitl", "gz_x500"
+        str(px4_bin),
     ]  
     return cmd
 
@@ -642,34 +642,34 @@ def run_once(
         px4_env["PX4_SIMULATOR"] = sim_engine
         px4_env["PX4_GZ_MODEL"] = model
         px4_env["PX4_GZ_WORLD"] = world
-        # px4_env["PX4_GZ_STANDALONE"] = "1"
-        # px4_env["PX4_SIM_SPEED_FACTOR"] = "1"
+        # px4_env["PX4_GZ_STANDALONE"] = "1"        # standalone mode: run SITL and Gazebo separately in own terminals 
+        # px4_env["PX4_SIM_SPEED_FACTOR"] = "1"     # DO NOT USE unless you are sure about the implications: problems with timeouts, mission execution, and log timestamps
 
         # geodetic home
-        # px4_env["PX4_HOME_LAT"] = str(lat)
-        # px4_env["PX4_HOME_LON"] = str(lon)
-        # px4_env["PX4_HOME_ALT"] = str(alt)
+        px4_env["PX4_HOME_LAT"] = str(lat)
+        px4_env["PX4_HOME_LON"] = str(lon)
+        px4_env["PX4_HOME_ALT"] = str(alt)
 
         # optional: yaw only, spawn at local ENU origin -> conversion from NED heading
         yaw_ned = heading_deg/180*math.pi
         yaw_enu = math.pi/2 - yaw_ned
         px4_env["PX4_GZ_MODEL_POSE"] = f"0.0,0.0,0.0,0.0,0.0,{yaw_enu}"
 
-        # # add model and world sdf
-        # existing = px4_env.get("GZ_SIM_RESOURCE_PATH", "")
-        # paths = [p for p in existing.split(":") if p]
+        # add model and world sdf
+        existing = px4_env.get("GZ_SIM_RESOURCE_PATH", "")
+        paths = [p for p in existing.split(":") if p]
                 
-        # px4_models = str(px4_dir / "Tools" / "simulation" / "gz" / "models")
-        # px4_worlds = str(px4_dir / "Tools" / "simulation" / "gz" / "worlds")
+        px4_models = str(px4_dir / "Tools" / "simulation" / "gz" / "models")
+        px4_worlds = str(px4_dir / "Tools" / "simulation" / "gz" / "worlds")
 
-        # new_paths = []
-        # if px4_models not in paths:
-        #     new_paths.append(px4_models)
-        # if px4_worlds not in paths:
-        #     new_paths.append(px4_worlds)
-        # new_paths.extend(paths)
+        new_paths = []
+        if px4_models not in paths:
+            new_paths.append(px4_models)
+        if px4_worlds not in paths:
+            new_paths.append(px4_worlds)
+        new_paths.extend(paths)
 
-        # px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
+        px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
 
         sitl = _popen("sitl", run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir.parent.parent.parent.parent.parent / "ap" / "px4", log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl

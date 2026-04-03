@@ -531,9 +531,7 @@ class PX4MissionRunner:
                 return msg
 
         return None
-    
-
-
+  
     def _wait_sensor_health_ok(self, m, timeout: float = 60.0) -> bool:
         """
         Wait for PX4 sensor readiness.
@@ -566,9 +564,6 @@ class PX4MissionRunner:
         print("[READINESS] timeout waiting for global position")
         return False
 
-
-
-
     def _wait_global_position_ok(self, m, timeout: float = 60.0) -> bool:
         """
         Wait for PX4 estimator / global position readiness.
@@ -592,10 +587,6 @@ class PX4MissionRunner:
 
         print("[MONITOR] timeout waiting for global position")
         return False
-
-
-
-
 
     def _arm(self, m) -> bool:
         self._set_status(MissionState.ARMING, "arming vehicle")
