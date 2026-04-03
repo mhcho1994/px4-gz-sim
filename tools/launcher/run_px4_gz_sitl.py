@@ -410,7 +410,7 @@ def find_px4_etc(px4_dir: Path) -> Path:
 
 def run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
     cmd = [
-        str(px4_bin)
+        "make", "px4_sitl", "gz_x500"
     ]  
     return cmd
 
@@ -617,12 +617,12 @@ def run_once(
         current["gz"] = gz
 
     # QGroundControl second
-    if current.get("QGC") is None:
-        time.sleep(startup_delay_s)
-        print(f"[INFO] Waiting {startup_delay_s:.1f}s for QGroundControl to initialize...")
+    # if current.get("QGC") is None:
+    #     time.sleep(startup_delay_s)
+    #     print(f"[INFO] Waiting {startup_delay_s:.1f}s for QGroundControl to initialize...")
 
-        QGC = _popen("QGC", run_qgc_cmd(qgc_outport), cwd=logs_dir, log_path=qgc_log)
-        current["QGC"] = QGC
+    #     QGC = _popen("QGC", run_qgc_cmd(qgc_outport), cwd=logs_dir, log_path=qgc_log)
+    #     current["QGC"] = QGC
 
 
     # PX4 standalone SITL third
@@ -643,35 +643,35 @@ def run_once(
         px4_env["PX4_GZ_MODEL"] = model
         px4_env["PX4_GZ_WORLD"] = world
         # px4_env["PX4_GZ_STANDALONE"] = "1"
-        px4_env["PX4_SIM_SPEED_FACTOR"] = "1"
+        # px4_env["PX4_SIM_SPEED_FACTOR"] = "1"
 
         # geodetic home
-        px4_env["PX4_HOME_LAT"] = str(lat)
-        px4_env["PX4_HOME_LON"] = str(lon)
-        px4_env["PX4_HOME_ALT"] = str(alt)
+        # px4_env["PX4_HOME_LAT"] = str(lat)
+        # px4_env["PX4_HOME_LON"] = str(lon)
+        # px4_env["PX4_HOME_ALT"] = str(alt)
 
         # optional: yaw only, spawn at local ENU origin -> conversion from NED heading
         yaw_ned = heading_deg/180*math.pi
         yaw_enu = math.pi/2 - yaw_ned
         px4_env["PX4_GZ_MODEL_POSE"] = f"0.0,0.0,0.0,0.0,0.0,{yaw_enu}"
 
-        # add model and world sdf
-        existing = px4_env.get("GZ_SIM_RESOURCE_PATH", "")
-        paths = [p for p in existing.split(":") if p]
+        # # add model and world sdf
+        # existing = px4_env.get("GZ_SIM_RESOURCE_PATH", "")
+        # paths = [p for p in existing.split(":") if p]
                 
-        px4_models = str(px4_dir / "Tools" / "simulation" / "gz" / "models")
-        px4_worlds = str(px4_dir / "Tools" / "simulation" / "gz" / "worlds")
+        # px4_models = str(px4_dir / "Tools" / "simulation" / "gz" / "models")
+        # px4_worlds = str(px4_dir / "Tools" / "simulation" / "gz" / "worlds")
 
-        new_paths = []
-        if px4_models not in paths:
-            new_paths.append(px4_models)
-        if px4_worlds not in paths:
-            new_paths.append(px4_worlds)
-        new_paths.extend(paths)
+        # new_paths = []
+        # if px4_models not in paths:
+        #     new_paths.append(px4_models)
+        # if px4_worlds not in paths:
+        #     new_paths.append(px4_worlds)
+        # new_paths.extend(paths)
 
-        px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
+        # px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
 
-        sitl = _popen("sitl", run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir, log_path=sitl_log, env=px4_env)
+        sitl = _popen("sitl", run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir.parent.parent.parent.parent.parent / "ap" / "px4", log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl
 
     time.sleep(startup_delay_s)
