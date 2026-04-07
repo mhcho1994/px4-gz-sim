@@ -15,7 +15,6 @@ What this script does
 
 Design notes
 ------------
-- QGC is expected to be run separately by the user.
 - Gazebo is launched in standalone mode.
 - PX4 binary is assumed to be already built.
 """
@@ -23,6 +22,7 @@ Design notes
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 import sys
 import shlex
@@ -42,11 +42,13 @@ _THIS_FILE = Path(__file__).resolve()
 _TOOLS_DIR = _THIS_FILE.parents[1]
 _COMMANDER_DIR = _TOOLS_DIR / "commander"
 _QGC_DIR = _TOOLS_DIR / "QGC"
+_FAKE_GCS = _COMMANDER_DIR / "fake_gcs_heartbeat.py"
 
 if str(_COMMANDER_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMANDER_DIR))
 
 from pymavlink_px4_commander import PX4MissionRunner
+print("[LOADING] Import PX4MissionRunner")
 
 
 @dataclass
@@ -54,9 +56,10 @@ class PX4ScenarioConfig:
     # sim instance parameters
     px4_dir: str = "${FLIGHTSTACK_SIM_ROOT}/ap/px4"
     instance: int = 0
-    mavlink_url: str = "udp://127.0.0.1:14650"
+    mavlink_url: str = "udp://127.0.0.1:14540"
     startup_delay_s: float = 0.0
     max_run_s: float = 60.0
+    max_retries: int = 3
 
     # sim setup
     vehicle: int = 4001
@@ -64,7 +67,7 @@ class PX4ScenarioConfig:
     world: str = "default"
     location: str = "Purdue"
     scenario_name: str = "unnamed"
-    qgc_outport: int = 14650
+    gcs_outport: int = 14550
 
 
 @dataclass
@@ -189,7 +192,7 @@ def _cleanup_sitl_processes() -> None:
     _pkill_patterns(patterns, "INT")
 
 
-def _cleanup_qgc_processes() -> None:
+def _cleanup_gcs_processes() -> None:
     """
     Best-effort cleanup for QGroundControl related processes that may survive
     after killing the parent shell/process group.
@@ -205,6 +208,7 @@ def _cleanup_qgc_processes() -> None:
         r"QGroundControl",
         r"bin/QGroundControl",
         r"QGroundControl-x86_64.AppImage",
+        r"fake_gcs_heartbeat.py",
     ]
 
     _pkill_patterns(patterns, "INT")
@@ -277,8 +281,8 @@ def _kill_tree(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
     if "sitl" in ph.name:
         _cleanup_sitl_processes()
 
-    if "qgc" in ph.name:
-        _cleanup_qgc_processes()
+    if "gcs" in ph.name:
+        _cleanup_gcs_processes()
 
 
 def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
@@ -308,7 +312,7 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         pass
 
 
-def ensure_px4_built(px4_dir: Path) -> Path:
+def _ensure_px4_built(px4_dir: Path) -> Path:
     """
     Ensure PX4 SITL binary exists. If not, build it.
 
@@ -340,7 +344,7 @@ def ensure_px4_built(px4_dir: Path) -> Path:
     return binary
 
 
-def find_px4_binary(px4_dir: Path) -> Path:
+def _find_px4_binary(px4_dir: Path) -> Path:
     """
     Prefer already-built PX4 SITL binary.
 
@@ -361,7 +365,7 @@ def find_px4_binary(px4_dir: Path) -> Path:
     )
 
 
-def find_px4_rc_script(px4_dir: Path) -> Path:
+def _find_px4_rc_script(px4_dir: Path) -> Path:
     """
     PX4 SITL startup script commonly used by the binary.
     rcS: PX4 nsh-style initialization script
@@ -381,7 +385,7 @@ def find_px4_rc_script(px4_dir: Path) -> Path:
     )
 
 
-def find_px4_etc(px4_dir: Path) -> Path:
+def _find_px4_etc(px4_dir: Path) -> Path:
     """
     Locate the PX4 runtime `etc` directory for SITL.
 
@@ -408,14 +412,14 @@ def find_px4_etc(px4_dir: Path) -> Path:
     )
 
 
-def run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
+def _run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
     cmd = [
         str(px4_bin),
     ]  
     return cmd
 
 
-def read_location_from_txt(txt_path: Path, name: str) -> Tuple[float, float, float, float]:
+def _read_location_from_txt(txt_path: Path, name: str) -> Tuple[float, float, float, float]:
     """
     Parse a line like:
       Purdue=40.41176161953683,-86.93352081596879,0,0
@@ -446,7 +450,7 @@ def read_location_from_txt(txt_path: Path, name: str) -> Tuple[float, float, flo
     raise KeyError(f"Location '{name}' not found in {txt_path}")
 
 
-def run_qgc_cmd(out_port: int) -> list[str]:
+def _run_qgc_cmd(out_port: int) -> list[str]:
     """
     Launch QGroundControl (GCS).
     QGC automatically listens on UDP port 14550.
@@ -455,14 +459,41 @@ def run_qgc_cmd(out_port: int) -> list[str]:
     return [str(qgc_bin)]
 
 
-def run_gz_cmd(world_sdf: str, verbose: str = "-v4") -> list[str]:
+def _run_fake_gcs_cmd(connect_url: str = "udpout:127.0.0.1:14550", rate_hz: float = 10.0) -> list[str]:
+    """
+    Launch a lightweight fake GCS heartbeat sender.
+
+    Parameters
+    ----------
+    connect_url : str
+        pymavlink connection URL used to send GCS heartbeat to PX4.
+        Usually udpout:127.0.0.1:14550 for local PX4 SITL.
+
+    rate_hz : float
+        Heartbeat rate in Hz.
+    """
+    return [
+        sys.executable,
+        str(_FAKE_GCS),
+        "--connect", connect_url,
+        "--rate-hz", str(rate_hz),
+        "--source-system", "255",
+        "--source-component", "190",
+    ]
+
+
+def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) -> list[str]:
     """
     Run the Gazebo Sim command.
 
     Example:
       gz sim -v4 -r iris_runway.sdf
     """
-    return ["gz", "sim", verbose, "-r", world_sdf]
+
+    if headless:
+        return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
+    else:
+        return ["gz", "sim", verbose, "-r", world_sdf]
 
 
 def _finalize_runner(runner, timeout: float = 2.0) -> None:
@@ -483,7 +514,7 @@ def run_once(
     instance: int,
     scenario_path: Path,
     logs_dir: Path,
-    qgc_outport: int,
+    gcs_outport: int,
     mavlink_url: str,
     startup_delay_s: float,
     max_run_s: float,
@@ -493,6 +524,8 @@ def run_once(
     frame: str,
     world: str,
     location: str,
+    headless: bool,
+    verbose: bool,
 ) -> int:
     """
     Execute a single PX4 SITL + Gazebo simulation episode with mission execution.
@@ -517,10 +550,10 @@ def run_once(
         Path to scenario.yaml describing the mission to execute.
 
     logs_dir : Path
-        Directory where SITL, Gazebo, and QGC logs are stored.
+        Directory where SITL, Gazebo, and GCS logs are stored.
 
-    qgc_outport : int
-        UDP port used by QGroundControl for MAVLink communication.
+    gcs_outport : int
+        UDP port used by QGroundControl (or fake GCS) for MAVLink communication.
 
     mavlink_url : str
         MAVLink endpoint (e.g., udp://127.0.0.1:14540).
@@ -549,6 +582,12 @@ def run_once(
 
     location : str
         Named location used to set home position (resolved via locations.txt).
+
+    headless : bool
+        Whether to run in headless mode (no GUI). If True, QGC and Gazebo GUI will be disabled.
+
+    verbose : bool
+        Whether to print detailed logs and environment variables for debugging.
 
     Returns
     -------
@@ -579,15 +618,16 @@ def run_once(
     # set logs dir
     sitl_log = logs_dir / "sitl.log"
     gz_log = logs_dir / "gazebo.log"
-    qgc_log = logs_dir / "qgc.log"
+    gcs_log = logs_dir / "gcs.log"
 
     # find PX4 built binary and startup run commands
-    px4_bin = find_px4_binary(px4_dir)
-    rc_script = find_px4_rc_script(px4_dir)
-    px4_etc = find_px4_etc(px4_dir)
+    px4_bin = _find_px4_binary(px4_dir)
+    rc_script = _find_px4_rc_script(px4_dir)
+    px4_etc = _find_px4_etc(px4_dir)
 
     # Gazebo first
-    # TODO: gazebo standalone mode
+    # TODO: gazebo standalone mode and verbose logging with GZ_SIM_VERBOSE=4 and GZ_SIM_LOG_LEVEL=4 (debug)
+    # TODO: headless mode with --headless and/or GZ_SIM_HEADLESS=1 (no GUI, faster startup, less resource usage)
     if False:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for Gazebo to initialize...")
@@ -613,17 +653,25 @@ def run_once(
                 f"{px4_worlds}:{existing}" if existing else str(px4_models)
             )
 
-        gz = _popen("gazebo", run_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log, env=gz_env)
+        gz = _popen("gazebo", _run_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log, env=gz_env)
         current["gz"] = gz
 
     # QGroundControl second
-    # if current.get("QGC") is None:
-    #     time.sleep(startup_delay_s)
-    #     print(f"[INFO] Waiting {startup_delay_s:.1f}s for QGroundControl to initialize...")
+    if current.get("gcs") is None and not headless:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for QGroundControl to initialize...")
 
-    #     QGC = _popen("QGC", run_qgc_cmd(qgc_outport), cwd=logs_dir, log_path=qgc_log)
-    #     current["QGC"] = QGC
+        QGC = _popen("gcs_qgc", _run_qgc_cmd(gcs_outport), cwd=logs_dir, log_path=gcs_log)
+        current["gcs"] = QGC
+    
+    elif current.get("gcs") is None and headless:
+        time.sleep(startup_delay_s)
+        print(f"[INFO] Waiting {startup_delay_s:.1f}s for fake GCS to initialize...")
 
+        fGCS = _popen("gcs_fake", 
+                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=1.0), 
+                      cwd=logs_dir, log_path=gcs_log)
+        current["gcs"] = fGCS
 
     # PX4 standalone SITL third
     # TODO: px4 standalone mode with calling etc posix
@@ -631,7 +679,7 @@ def run_once(
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for SITL to initialize...")
 
-        lat, lon, alt, heading_deg = read_location_from_txt(
+        lat, lon, alt, heading_deg = _read_location_from_txt(
             Path(_THIS_FILE.parent / "locations.txt"), location
         )
 
@@ -642,6 +690,10 @@ def run_once(
         px4_env["PX4_SIMULATOR"] = sim_engine
         px4_env["PX4_GZ_MODEL"] = model
         px4_env["PX4_GZ_WORLD"] = world
+
+        if headless:
+            px4_env["HEADLESS"] = "1"
+
         # px4_env["PX4_GZ_STANDALONE"] = "1"        # standalone mode: run SITL and Gazebo separately in own terminals 
         # px4_env["PX4_SIM_SPEED_FACTOR"] = "1"     # DO NOT USE unless you are sure about the implications: problems with timeouts, mission execution, and log timestamps
 
@@ -671,7 +723,7 @@ def run_once(
 
         px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
 
-        sitl = _popen("sitl", run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir.parent.parent.parent.parent.parent / "ap" / "px4", log_path=sitl_log, env=px4_env)
+        sitl = _popen("sitl", _run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir, log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl
 
     time.sleep(startup_delay_s)
@@ -719,13 +771,15 @@ def run_once(
     current["sitl"] = None
     _finalize_proc(current.get("gz"))
     current["gz"] = None
+    _finalize_proc(current.get("gcs"))
+    current["gcs"] = None
 
     print('[HIT] move to next iteration')
 
     return rc
 
 
-def collect_px4_logs(px4_dir: Path, run_dir: Path):
+def _collect_px4_logs(px4_dir: Path, run_dir: Path):
     """
     Extract PX4 ULog file path from sitl.log and move it to run_dir.
 
@@ -741,6 +795,11 @@ def collect_px4_logs(px4_dir: Path, run_dir: Path):
     run_dir : Path
         Run-specific log directory containing px4_logs folder and corresponding sitl.log
         (for example, `data/run_000`).
+
+    Returns
+    -------
+    bool
+        True if a .ulg file was successfully collected, False otherwise.
     """
     dst_root = run_dir / "px4_logs" / "raw"
     dst_root.mkdir(parents=True, exist_ok=True)
@@ -749,32 +808,33 @@ def collect_px4_logs(px4_dir: Path, run_dir: Path):
 
     if not sitl_log.exists():
         print(f"[WARN] sitl.log not found: {sitl_log}")
-        return
+        return False
     
     text = sitl_log.read_text(errors="ignore")
     matches = re.findall(r"\./log/[^\s]+\.ulg", text)
 
     if not matches:
         print(f"[WARN] No .ulg path found in {sitl_log}")
-        return
+        return False
 
     src_root = px4_dir / "build" / "px4_sitl_default" / "rootfs"
 
     if not src_root.exists():
         print("[WARN] No PX4 log directory found")
-        return
+        return False
 
     rel_path = Path(matches[-1].replace("./", ""))
     src_ulg_file = src_root / rel_path
 
-    if not src_ulg_file:
-        print("[WARN] No .ulg files found")
-        return
+    if not src_ulg_file.exists():
+        print(f"[WARN] .ulg file not found: {src_ulg_file}")
+        return False
 
     dst_ulg_file = dst_root / rel_path.name
     shutil.move(str(src_ulg_file), dst_ulg_file)
 
     print(f"[INFO] PX4 log moved: {dst_ulg_file}")
+    return True
 
 
 def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
@@ -788,8 +848,8 @@ def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
       frame: gz_x500
       world: default
       location: Purdue
-      qgc_outport: 14650
-      connect_url (mavlink): udp:127.0.0.1:14650
+      gcs_outport: 14550
+      connect_url (mavlink): udp:127.0.0.1:14540
     """
     scenario_path = run_dir / "scenario.yaml"
     if not scenario_path.exists():
@@ -811,7 +871,7 @@ def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
         world=str(sim.get("world", PX4ScenarioConfig.world)),
         location=str(sim.get("location", PX4ScenarioConfig.location)),
         scenario_name=str(scenario.get("name", PX4ScenarioConfig.scenario_name)),
-        qgc_outport=str(sim.get("mavproxy_outport", PX4ScenarioConfig.qgc_outport)),
+        gcs_outport=str(sim.get("qgc_outport", PX4ScenarioConfig.gcs_outport)),
         mavlink_url=str(mavlink.get("connect_url", PX4ScenarioConfig.mavlink_url)),
     )
     return cfg
@@ -826,15 +886,43 @@ def _iter_run_dirs(data_root: Path) -> list[Path]:
     return sorted([p for p in data_root.iterdir() if p.is_dir() and p.name.startswith("run_")])
 
 
-def _should_skip_run_dir(run_dir: Path, force: bool) -> bool:
+def _prepare_run_dir(run_dir: Path, force: bool) -> bool:
     """
-    Skip if 'px4_logs' exists.
+    Decide whether to skip or run.
+    
+    Returns:
+        True  -> skip
+        False -> run
     """
-    logs_dir = run_dir / "px4_logs"
+    logs_dir = run_dir / "px4_logs" / "raw"
+    ulg_files = list(logs_dir.rglob("*.ulg")) if logs_dir.exists() else []
+
+    # case 1: force → always clean up and run
     if force:
+        if (run_dir / "px4_logs").exists():
+            print(f"[CLEAN] Removing existing logs in {run_dir}")
+            shutil.rmtree(run_dir / "px4_logs")
         return False
-    ulg_files = list(logs_dir.rglob("*.ulg"))
-    return logs_dir.exists() and (len(ulg_files) > 0)
+
+    # case 2: valid log exists → skip
+    if logs_dir.exists() and len(ulg_files) > 0:
+        return True
+
+    # case 3: no log → run
+    return False
+
+
+def _apply_cli_overrides(cfg: PX4ScenarioConfig, args: argparse.Namespace) -> PX4ScenarioConfig:
+    cfg = copy.deepcopy(cfg)
+    cfg.startup_delay_s = args.startup_delay_s
+    cfg.max_run_s = args.max_run_s
+    cfg.max_retries = args.max_retries
+
+    # Ensure that fake GCS heartbeat will use UDP 14550 separately.
+    if args.headless:
+        cfg.gcs_outport = 14550
+
+    return cfg
 
 
 def main() -> int:
@@ -843,6 +931,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="Re-run even if px4_logs already exist")
     ap.add_argument("--startup-delay-s", type=float, default=5.0)
     ap.add_argument("--max-run-s", type=float, default=60.0)
+    ap.add_argument("--max-retries", type=int, default=3, help="Number of retries for failed runs (0 for no retries)")
+    ap.add_argument("--headless", action="store_true", help="Run Gazebo/QGC in headless mode (for batch SITL in CLI modes)")
+    ap.add_argument("--verbose", action="store_true", help="Verbose logging of commands and environment variables")
     args = ap.parse_args()
 
     # Access to the resolved run root path
@@ -851,17 +942,17 @@ def main() -> int:
     stop = {"flag": False}
     current: dict[str, Optional[ProcHandle]] = {
         "gz": None,
-        "QGC": None,
+        "gcs": None,
         "sitl": None,
     }
 
     def _sig(_signum, _frame):
         stop["flag"] = True
         _finalize_proc(current.get("gz"))
-        _finalize_proc(current.get("QGC"))
+        _finalize_proc(current.get("gcs"))
         _finalize_proc(current.get("sitl"))
         current["gz"] = None
-        current["QGC"] = None
+        current["gcs"] = None
         current["sitl"] = None
 
     # Terminate on Ctrl+C or SIGTERM
@@ -881,7 +972,7 @@ def main() -> int:
             print("Interrupted. Exiting.")
             return 130
 
-        if _should_skip_run_dir(run_dir, force=args.force):
+        if _prepare_run_dir(run_dir, force=args.force):
             print(f"[SKIP] {run_dir} (px4_logs exists and contains .ulg)")
             continue
 
@@ -900,47 +991,63 @@ def main() -> int:
         # Get scenario path
         scenario_path = run_dir / "scenario.yaml"
 
-        # Set other configurations
-        cfg.startup_delay_s = args.startup_delay_s
-        cfg.max_run_s = args.max_run_s
+        # Set other configurations and overrides if headless mode is enabled
+        cfg = _apply_cli_overrides(cfg, args)
 
         # Confirm that PX4 is built
-        ensure_px4_built(px4_dir=cfg.px4_dir)
+        _ensure_px4_built(px4_dir=cfg.px4_dir)
 
         # Print configuration info
         print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")
         print(f"  px4_dir={cfg.px4_dir} vehicle={cfg.vehicle}")
         print(f"  world={cfg.world} location={cfg.location}")
-        print(f"  instance={cfg.instance} qgc_outport={cfg.qgc_outport}")
-        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s}")
+        print(f"  instance={cfg.instance} gcs_outport={cfg.gcs_outport}")
+        print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s} max_retries={cfg.max_retries}")
         print(f"  logs_root={logs_root} scenario_path={scenario_path} mavlink_url={cfg.mavlink_url}")
 
         # Execute the scenario
-        rc = run_once(
-            px4_dir=cfg.px4_dir,
-            instance=cfg.instance,
-            scenario_path=scenario_path,
-            logs_dir=logs_root,
-            qgc_outport=cfg.qgc_outport,
-            mavlink_url=cfg.mavlink_url,
-            startup_delay_s=cfg.startup_delay_s,
-            max_run_s=cfg.max_run_s,
-            stop=stop,
-            current=current,
-            vehicle=cfg.vehicle,
-            frame=cfg.frame,
-            world=cfg.world,
-            location=cfg.location
-        )
+        rc = 1
+        for attempt in range(1, cfg.max_retries + 1):
 
-        # Move sitl log from px4 default directory to log folder
-        collect_px4_logs(cfg.px4_dir, run_dir)
+            if stop["flag"]:
+                print("Interrupted. Exiting.")
+                return 130
+            
+            print(f"[RUN] Attempt {attempt}/{cfg.max_retries} for {run_dir.name}")
+            rc = run_once(
+                px4_dir=cfg.px4_dir,
+                instance=cfg.instance,
+                scenario_path=scenario_path,
+                logs_dir=logs_root,
+                gcs_outport=cfg.gcs_outport,
+                mavlink_url=cfg.mavlink_url,
+                startup_delay_s=cfg.startup_delay_s,
+                max_run_s=cfg.max_run_s,
+                stop=stop,
+                current=current,
+                vehicle=cfg.vehicle,
+                frame=cfg.frame,
+                world=cfg.world,
+                location=cfg.location,
+                headless=args.headless,
+                verbose=args.verbose,
+            )
+
+            # Attempt to collect logs from PX4 SITL build directory based on sitl.log output and 
+            # check if .ulg file is successfully moved to run_dir. If not, retry the run up to 3 times.
+            if _collect_px4_logs(cfg.px4_dir, run_dir):
+                break
+
+            if attempt < cfg.max_retries and not stop["flag"]:
+                print(f"[WARN] No .ulg collected for {run_dir.name}; retrying")
+            else:
+                print(f"[ERROR] Failed to collect .ulg for {run_dir.name} after {attempt} attempt(s)")
+                rc = max(rc, 1)
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)
 
-    # Kill QGC and end SITL
-    _finalize_proc(current.get("QGC"))
-    current["QGC"] = None
+    # Kill GCS and end SITL
+
 
     return overall_rc
 

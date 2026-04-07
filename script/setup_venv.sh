@@ -31,7 +31,7 @@ echo "=== Starting automatic setup virtual environment for segmentation/classifi
 # ------------------------------------------------------------------------------
 # Step 1: Create virtual environment if it does not exist
 # ------------------------------------------------------------------------------
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ]; then
     echo ">> Creating virtual environment (venv)..."
     python3 -m venv ./venv
 else
@@ -54,30 +54,17 @@ echo ">> Installing required packages..."
 # Upgrade pip to avoid compatibility issues
 pip install --upgrade pip
 
-#            - Log parsing (pyulog, pybinlog)
-#            - Configuration handling (pyyaml)
-#            - Mavlink handling (pymavlink)
-#            - Data processing (pandas, numpy)
-#            - Visualization (matplotlib)
-#            - Classical ML (scikit-learn)
-#            - Deep learning (torch, torchvision, torchaudio)
-
-
 # Log parsing, scenario parsing and mavlink handling
-pip install pyulog pybinlog pymavlink
+pip install pyyaml pyulog pybinlog pymavlink
 
+# Data processing, visulization
+pip install pandas numpy matplotlib
 
+# Classical ML and deep learning
+pip install scikit-learn torch torchvision torchaudio
 
-
-pip install scikit-learn pandas numpy matplotlib pyulog pymavlink torch torchvision torchaudio
-
-# YAML parser for scenario/config handling
-pip install pyyaml
-
-# 3. 패키지 설치 (pip 최신화 후 설치)
-echo ">> 필수 패키지를 설치합니다..."
-pip install --upgrade pip
-pip install scikit-learn pandas numpy matplotlib pyulog pymavlink torch torchvision torchaudio
-pip install pyyaml
-
-echo "=== 세팅이 모두 완료되었습니다! ==="
+# Finish setup
+echo ""
+echo "Virtual environment setup DONE."
+echo "To activate the virtual environment, run: source ./venv/bin/activate"
+echo "To enable from auto-activation in vscode, change \"python.terminal.activateEnvironment\": true in settings.json"

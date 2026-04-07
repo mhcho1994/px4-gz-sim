@@ -9,7 +9,9 @@
       "args": [
         "turn3pts",
         "--outdir", "${workspaceFolder}/data/sitl_logs",
-        "--runs", "1",
+        "--runs", "2",
+        "--turn-deg", "random",
+        "--takeoff-alt-m", "random",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -29,7 +31,7 @@
         "--run-root", "${workspaceFolder}/data/sitl_logs",
         "--startup-delay", "2",
         "--max-run-s", "300",
-        "--force"
+        "--force", "--verbose", "--headless",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -48,7 +50,8 @@
       "args": [
         "--run-root", "${workspaceFolder}/data/sitl_logs",
         "--startup-delay", "2",
-        "--max-run-s", "300"
+        "--max-run-s", "300",
+        "--force", "--verbose", "--headless",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -81,6 +84,21 @@
       "program": "${workspaceFolder}/tools/commander/pymavlink_ardupilot_commander.py",
       "args": [
         "--scenario", "${workspaceFolder}/data/sitl_logs/run_000/scenario.yaml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    {
+      "name": "Debug: Fake GCS for PX4 SITL Headless",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/commander/fake_gcs_heartbeat.py",
+      "args": [
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
