@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 from pathlib import Path
 
-from signal_processor import process_ardu_for_wavelet, process_px4_for_wavelet
+from signal_processor import process_ardu_flight_data, process_px4_flight_data
 import numpy as np
 import pywt
 
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     all_feature_names = [
         "Altitude", "Heading", "Z-Axis Velocity", "XY-Plane Speed", 
         "Z-Axis Acceleration", "XY-Plane Accel Norm", 
-        "Z-Axis Jerk", "XY-Plane Jerk Norm", "Curvature", "Yaw rate"
+        "Z-Axis Jerk", "XY-Plane Jerk Norm", "Curvature", "Yaw rate", "Slip rate"
     ]
     target_features = [
         "XY-Plane Speed", "Heading", "XY-Plane Accel Norm", 
@@ -90,38 +90,40 @@ if __name__ == "__main__":
 
     for i in range(100):
         run_folder = f"run_{i:03d}"
-        run_dir = BASE_DATA_DIR / run_folder
-        if not run_dir.exists(): continue
-
-        px4_dir = run_dir / "px4_logs" / "raw"
-        ardu_dir = run_dir / "ardu_logs" / "raw" / "logs"
+        px4_dir = BASE_DATA_DIR / "sitl_logs" / run_folder / "px4_logs" / "raw"
+        ardu_dir = BASE_DATA_DIR / "sitl_logs" / run_folder / "ardu_logs" / "raw" / "logs"
+        output_dir = BASE_DATA_DIR / "sitl_logs" / run_folder
         
+        if not output_dir.exists(): 
+            continue
+
         sample_data_px4, t_px4 = None, None
         sample_data_ardu, t_ardu = None, None
         
-        # =========================================================
-        # [수정 포인트] signal_processor.py의 새로운 반환값 언패킹 적용
-        # =========================================================
+        # Process PX4
         if px4_dir.exists():
             for file in os.listdir(px4_dir):
                 if file.lower().endswith('.ulg'):
-                    px4_result = process_px4_for_wavelet(str(px4_dir / file))
+                    px4_result = process_px4_flight_data(str(px4_dir / file))
                     if px4_result[0] is not None:
-                        _, _, _, _, turn_segments_px4, _ = px4_result
-                        # 첫 번째 Turn 구간만 추출
-                        if turn_segments_px4 and len(turn_segments_px4) > 0:
-                            t_px4, sample_data_px4 = turn_segments_px4[0]
+                        _, _, _, _, segments_px4, _ = px4_result
+                        if segments_px4['turn'] and len(segments_px4['turn']) > 0:
+                            turn_seg = segments_px4['turn'][0]
+                            t_px4 = turn_seg['time']
+                            sample_data_px4 = turn_seg['features']
                     break
                     
+        # Process ArduPilot
         if ardu_dir.exists():
             for file in os.listdir(ardu_dir):
                 if file.lower().endswith('.bin'):
-                    ardu_result = process_ardu_for_wavelet(str(ardu_dir / file))
+                    ardu_result = process_ardu_flight_data(str(ardu_dir / file))
                     if ardu_result[0] is not None:
-                        _, _, _, _, turn_segments_ardu, _ = ardu_result
-                        # 첫 번째 Turn 구간만 추출
-                        if turn_segments_ardu and len(turn_segments_ardu) > 0:
-                            t_ardu, sample_data_ardu = turn_segments_ardu[0]
+                        _, _, _, _, segments_ardu, _ = ardu_result
+                        if segments_ardu['turn'] and len(segments_ardu['turn']) > 0:
+                            turn_seg = segments_ardu['turn'][0]
+                            t_ardu = turn_seg['time']
+                            sample_data_ardu = turn_seg['features']
                     break
                     
         if sample_data_px4 is not None and len(sample_data_px4) > 0 and \
@@ -129,7 +131,7 @@ if __name__ == "__main__":
            
             print(f"[{run_folder}] Generating DWT grid plot for Turn Segment...")
             auto_title = f"DWT Comparison [Turn Segment]: PX4 vs ArduPilot ({run_folder})"
-            save_path = run_dir / f"dwt_compare_turn_seg_{run_folder}.png"
+            save_path = output_dir / f"dwt_compare_turn_seg_{run_folder}.png"
             
             plot_dwt_comparison_grid(
                 t1=t_px4, px4_data=sample_data_px4, 

@@ -14,7 +14,7 @@ import matplotlib
 # WSL 환경 등 디스플레이가 없는 경우를 위한 백엔드 설정
 matplotlib.use('Agg')
 
-from signal_processor import process_px4_for_wavelet, process_ardu_for_wavelet, process_rosbag_for_wavelet
+from signal_processor import process_px4_flight_data, process_ardu_flight_data, process_rosbag_flight_data
 
 def load_timeseries_dataset():
     BASE_DATA_DIR = Path("data") 
@@ -35,14 +35,15 @@ def load_timeseries_dataset():
         if px4_dir.exists():
             for file in os.listdir(px4_dir):
                 if file.lower().endswith('.ulg'):
-                    px4_result = process_px4_for_wavelet(str(px4_dir / file))
+                    px4_result = process_px4_flight_data(str(px4_dir / file))
                     if px4_result[0] is not None:
-                        _, _, _, _, turn_segments, _ = px4_result
-                        if turn_segments and len(turn_segments) > 0:
-                            _, feat_turn = turn_segments[0]
-                            selected_features = feat_turn[:, target_indices]
-                            X_timeseries.append(selected_features) 
-                            y.append(0)  # Class 0: PX4
+                        _, _, _, _, segments_px4, _ = px4_result
+                        if segments_px4['turn'] and len(segments_px4['turn']) > 0:
+                            for turn_segment in segments_px4['turn']:
+                                feat_turn = turn_segment['features']
+                                selected_features = feat_turn[:, target_indices]
+                                X_timeseries.append(selected_features) 
+                                y.append(0)  # Class 0: PX4
                     break 
 
     print("[Info] Loading ArduPilot timeseries data (Turn Segments)...")
@@ -53,14 +54,15 @@ def load_timeseries_dataset():
         if ardu_dir.exists():
             for file in os.listdir(ardu_dir):
                 if file.lower().endswith('.bin'):
-                    ardu_result = process_ardu_for_wavelet(str(ardu_dir / file))
+                    ardu_result = process_ardu_flight_data(str(ardu_dir / file))
                     if ardu_result[0] is not None:
-                        _, _, _, _, turn_segments, _ = ardu_result
-                        if turn_segments and len(turn_segments) > 0:
-                            _, feat_turn = turn_segments[0]
-                            selected_features = feat_turn[:, target_indices]
-                            X_timeseries.append(selected_features) 
-                            y.append(1)  # Class 1: ArduPilot
+                        _, _, _, _, segments_ardu, _ = ardu_result
+                        if segments_ardu['turn'] and len(segments_ardu['turn']) > 0:
+                            for turn_segment in segments_ardu['turn']:
+                                feat_turn = turn_segment['features']
+                                selected_features = feat_turn[:, target_indices]
+                                X_timeseries.append(selected_features) 
+                                y.append(1)  # Class 1: ArduPilot
                     break
                     
     print("[Info] Loading real ArduPilot timeseries data (Turn Segments)...")
@@ -71,14 +73,15 @@ def load_timeseries_dataset():
         if ardu_dir.exists():
             for file in os.listdir(ardu_dir):
                 if file.lower().endswith('.csv'):
-                    ardu_result = process_rosbag_for_wavelet(str(ardu_dir / file))
+                    ardu_result = process_rosbag_flight_data(str(ardu_dir / file))
                     if ardu_result[0] is not None:
-                        _, _, _, _, turn_segments, _ = ardu_result
-                        if turn_segments and len(turn_segments) > 0:
-                            _, feat_turn = turn_segments[0]
-                            selected_features = feat_turn[:, target_indices]
-                            X_timeseries.append(selected_features) 
-                            y.append(1)  # Class 1: ArduPilot
+                        _, _, _, _, segments_rosbag, _ = ardu_result
+                        if segments_rosbag['turn'] and len(segments_rosbag['turn']) > 0:
+                            for turn_segment in segments_rosbag['turn']:
+                                feat_turn = turn_segment['features']
+                                selected_features = feat_turn[:, target_indices]
+                                X_timeseries.append(selected_features) 
+                                y.append(1)  # Class 1: ArduPilot
                     break
 
     return X_timeseries, np.array(y)

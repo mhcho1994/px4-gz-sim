@@ -13,11 +13,11 @@ matplotlib.use('Agg')
 TARGET_HZ = 50.0  
 DT = 1.0 / TARGET_HZ #20ms
 
-def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5, 
+def extract_flight_segments(t, features, dt=0.02, min_turn_duration=0.5, 
                           yaw_rate_threshold=0.2, straight_duration=1.0, heading_margin=0.2):
     spans = {'takeoff': None, 'landing': None, 'straight': [], 'turn': []}
-    segments = []
-    
+    segments = {'takeoff': None, 'landing': None, 'straight': [], 'turn': []}
+
     if features is None or len(features) < 2:
         return segments, spans
         
@@ -25,11 +25,12 @@ def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5,
     alt = features[:, 0]
     vz_norm = np.abs(features[:, 2])
     az_norm = np.abs(features[:, 4])
+    jerk_norm = np.abs(features[:, 7])  
     
     alt_95 = np.percentile(alt, 95)
     target_alt = alt_95 - 0.1
     
-    # [Step 1] 이착륙 구간 탐색
+    # [Step 1] Landing/Take-off
     flight_start_idx = 0
     state = 0
     for i in range(N):
@@ -50,8 +51,21 @@ def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5,
 
     if flight_start_idx > 0:
         spans['takeoff'] = (t[0], t[flight_start_idx])
+        segments['takeoff'] = {
+            'label': 'takeoff',
+            'time': t[0:flight_start_idx],
+            'features': features[0:flight_start_idx],
+            'span': (t[0], t[flight_start_idx])
+        }
+    
     if flight_end_idx < N - 1:
         spans['landing'] = (t[flight_end_idx], t[-1])
+        segments['landing'] = {
+            'label': 'landing',
+            'time': t[flight_end_idx:],
+            'features': features[flight_end_idx:],
+            'span': (t[flight_end_idx], t[-1])
+        }
                 
     flight_t = t[flight_start_idx:flight_end_idx]
     flight_features = features[flight_start_idx:flight_end_idx]
@@ -59,7 +73,7 @@ def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5,
     if len(flight_features) == 0:
         return segments, spans
         
-    # [Step 2] 직선 구간 찾기
+    # [Step 2] Straight 
     is_straight = np.zeros(len(flight_features), dtype=bool)
     window_size = int(straight_duration / dt) 
     
@@ -82,6 +96,12 @@ def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5,
     for start, end in zip(st_starts, st_ends):
         safe_end = min(end, len(flight_t) - 1)
         spans['straight'].append((flight_t[start], flight_t[safe_end]))
+        segments['straight'].append({
+            'label': 'straight',
+            'time': flight_t[start:safe_end],
+            'features': flight_features[start:safe_end],
+            'span': (flight_t[start], flight_t[safe_end])
+        })
 
     straight_indices = np.where(is_straight)[0]
     if len(straight_indices) == 0:
@@ -89,7 +109,7 @@ def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5,
         
     first_straight_idx = straight_indices[0]
 
-    # [Step 3] Turn 구간 추출
+    # [Step 3] Turn 
     is_turning = ~is_straight 
     is_turning[:first_straight_idx] = False
     
@@ -108,15 +128,16 @@ def extract_turn_segments(t, features, dt=0.02, min_turn_duration=0.5,
             
         safe_end = min(end, len(flight_t) - 1)
         spans['turn'].append((flight_t[start], flight_t[safe_end]))
-        
-        first_turn_t = flight_t[start:safe_end]
-        first_turn_segment = flight_features[start:safe_end, :]
-        segments.append((first_turn_t, first_turn_segment))
-        break 
+        segments['turn'].append({
+            'label': 'turn',
+            'time': flight_t[start:safe_end],
+            'features': flight_features[start:safe_end],
+            'span': (flight_t[start], flight_t[safe_end])
+        })
         
     return segments, spans
 
-def extract_wavelet_features(t, x, y, z, vx, vy, vz, window_len=200, poly_order=3):
+def extract_kinematic_features(t, x, y, z, vx, vy, vz, window_len=200, poly_order=3):
     t, unique_indices = np.unique(t, return_index=True)
     x, y, z = x[unique_indices], y[unique_indices], z[unique_indices]
     vx, vy, vz = vx[unique_indices], vy[unique_indices], vz[unique_indices]
@@ -161,7 +182,8 @@ def extract_wavelet_features(t, x, y, z, vx, vy, vz, window_len=200, poly_order=
     heading = np.unwrap(np.arctan2(vy_smooth, vx_smooth))
     raw_yaw_rate = np.gradient(heading, DT)
     yaw_rate = smooth(raw_yaw_rate)
-    
+    slip_rate = heading - yaw_rate
+
     v_vec_3d = np.vstack((vx_smooth, vy_smooth, vz_smooth)).T
     a_vec_3d = np.vstack((ax, ay, az)).T
     speed_3d = np.linalg.norm(v_vec_3d, axis=1)
@@ -169,16 +191,16 @@ def extract_wavelet_features(t, x, y, z, vx, vy, vz, window_len=200, poly_order=
     cross_mag = np.linalg.norm(cross_va, axis=1)
     raw_curvature = cross_mag / (speed_3d**3 + 1e-6)
     curvature = smooth(raw_curvature)
-    
+
     features = np.vstack((
         altitude, heading, v_alt, speed_xy, a_alt, acc_norm_xy, 
-        j_alt, jerk_norm_xy, curvature, yaw_rate
+        j_alt, jerk_norm_xy, curvature, yaw_rate, slip_rate
     )).T
     
     return t_new, features
 
 # =====================================================================
-# 통합된 원본 X-Y 궤적 플롯 함수
+# PLOT
 # =====================================================================
 def plot_combined_xy_trajectory(x_px4, y_px4, x_ardu, y_ardu, title="Combined X-Y Trajectory", save_path="xy_trajectory.png"):
     if (x_px4 is None or len(x_px4) == 0) and (x_ardu is None or len(x_ardu) == 0):
@@ -208,7 +230,7 @@ def plot_combined_xy_trajectory(x_px4, y_px4, x_ardu, y_ardu, title="Combined X-
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-def process_px4_for_wavelet(ulog_path):
+def process_px4_flight_data(ulog_path):
     try:
         ulog = ULog(ulog_path)
         loc_data = ulog.get_dataset('vehicle_local_position').data
@@ -216,20 +238,20 @@ def process_px4_for_wavelet(ulog_path):
         x, y, z = loc_data['x'], loc_data['y'], loc_data['z']
         vx, vy, vz = loc_data['vx'], loc_data['vy'], loc_data['vz']
             
-        extracted = extract_wavelet_features(t_loc, x, y, z, vx, vy, vz)
+        extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
         if extracted is None: return None, None, None, None, None, None
         
         t_full, feat_full = extracted
-        turn_segments, spans = extract_turn_segments(t_full, feat_full)
+        segments, spans = extract_flight_segments(t_full, feat_full)
         
         # X, Y 원본 데이터도 함께 반환
-        return x, y, t_full, feat_full, turn_segments, spans
+        return x, y, t_full, feat_full, segments, spans
         
     except Exception as e:
         print(f"[PX4 Extract Error] {ulog_path}: {e}")
         return None, None, None, None, None, None
 
-def process_ardu_for_wavelet(bin_path):
+def process_ardu_flight_data(bin_path):
     try:
         mlog = mavutil.mavlink_connection(bin_path)
         t_loc, x, y, z, vx, vy, vz = [], [], [], [], [], [], []
@@ -243,44 +265,38 @@ def process_ardu_for_wavelet(bin_path):
                 
         if len(x) < 50: return None, None, None, None, None, None
             
-        extracted = extract_wavelet_features(np.array(t_loc), np.array(x), np.array(y), np.array(z), np.array(vx), np.array(vy), np.array(vz))
+        extracted = extract_kinematic_features(np.array(t_loc), np.array(x), np.array(y), np.array(z), np.array(vx), np.array(vy), np.array(vz))
         if extracted is None: return None, None, None, None, None, None
         
         t_full, feat_full = extracted
-        turn_segments, spans = extract_turn_segments(t_full, feat_full)
+        segments, spans = extract_flight_segments(t_full, feat_full)
         
-        # X, Y 원본 데이터도 함께 반환
-        return x, y, t_full, feat_full, turn_segments, spans
+        return x, y, t_full, feat_full, segments, spans
         
     except Exception as e:
         print(f"[ArduPilot Extract Error] {bin_path}: {e}")
         return None, None, None, None, None, None
 
-def process_rosbag_for_wavelet(csv_path):
+def process_rosbag_flight_data(csv_path):
     try:
         data = np.genfromtxt(csv_path, delimiter=',', names=True)
         t_loc = data['bag_time_ns'] / 1e9
         x, y, z = data['x'], data['y'], data['z']
         vx, vy, vz = data['vx'], data['vy'], data['vz']
         
-        extracted = extract_wavelet_features(t_loc, x, y, z, vx, vy, vz)
+        extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
         if extracted is None: return None, None, None, None, None, None
         
         t_full, feat_full = extracted
-        turn_segments, spans = extract_turn_segments(t_full, feat_full)
+        segments, spans = extract_flight_segments(t_full, feat_full)
         
-        # X, Y 원본 데이터도 함께 반환
-        return x, y, t_full, feat_full, turn_segments, spans
+        return x, y, t_full, feat_full, segments, spans
         
     except Exception as e:
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
         return None, None, None, None, None, None
 
 
-
-# =====================================================================
-# 플롯 1: 전체 궤적 + 색칠된 구역 (라인 색상 지정 추가)
-# =====================================================================
 def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_color):
     if features is None or len(features) == 0: return
 
@@ -294,7 +310,6 @@ def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_c
 
     for i in range(10):
         ax = axes_flat[i]
-        # 라인 색상을 지정받은 색(Green or Orange)으로 그립니다.
         ax.plot(t, features[:, i], color=line_color, linewidth=1.5, zorder=2)
         ax.set_title(feature_names[i], fontsize=12, fontweight='bold')
         ax.set_xlabel('Time (s)', fontsize=10)
@@ -323,9 +338,7 @@ def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_c
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-# =====================================================================
-# 플롯 2: 잘라낸 Turn 구간 전용 플롯 (라인 색상 지정 추가)
-# =====================================================================
+
 def plot_turn_segment_features(t, features, title, save_path, line_color):
     if features is None or len(features) == 0: return
 
@@ -337,7 +350,6 @@ def plot_turn_segment_features(t, features, title, save_path, line_color):
     
     for i in range(10):
         ax = axes_flat[i]
-        # 라인 색상을 지정받은 색(Green or Orange)으로 그립니다.
         ax.plot(t, features[:, i], color=line_color, linewidth=2.0)
         ax.set_title(feature_names[i], fontsize=12, fontweight='bold')
         ax.set_xlabel('Absolute Time (s)', fontsize=10)
@@ -364,29 +376,23 @@ if __name__ == "__main__":
         px4_dir = run_dir / "px4_logs" / "raw"
         ardu_dir = run_dir / "ardu_logs" / "raw" / "logs"
         
-        # 데이터 초기화
         x_px4, y_px4, t_px4, feat_px4, turn_px4, spans_px4 = (None,) * 6
         x_ardu, y_ardu, t_ardu, feat_ardu, turn_ardu, spans_ardu = (None,) * 6
         
-        # 1. PX4 데이터 로드
         if px4_dir.exists():
             for file in os.listdir(px4_dir):
                 if file.lower().endswith('.ulg'):
-                    px4_result = process_px4_for_wavelet(str(px4_dir / file))
+                    px4_result = process_px4_flight_data(str(px4_dir / file))
                     x_px4, y_px4, t_px4, feat_px4, turn_px4, spans_px4 = px4_result
                     break 
 
-        # 2. ArduPilot 데이터 로드
         if ardu_dir.exists():
             for file in os.listdir(ardu_dir):
                 if file.lower().endswith('.bin'):
-                    ardu_result = process_ardu_for_wavelet(str(ardu_dir / file))
+                    ardu_result = process_ardu_flight_data(str(ardu_dir / file))
                     x_ardu, y_ardu, t_ardu, feat_ardu, turn_ardu, spans_ardu = ardu_result
                     break
 
-        # =============================================================
-        # 3. 플롯 1 - 통합 X-Y 궤적 그리기 (PX4 & ArduPilot 한 번에)
-        # =============================================================
         if (x_px4 is not None) or (x_ardu is not None):
             plot_combined_xy_trajectory(
                 x_px4, y_px4, x_ardu, y_ardu, 
@@ -394,16 +400,13 @@ if __name__ == "__main__":
                 save_path=str(run_dir / f"trajectory_xy_combined_{run_folder}.png")
             )
 
-        # =============================================================
-        # 4. 플롯 2 & 3 - PX4 궤적 및 세그먼트 플롯 (초록색)
-        # =============================================================
         if feat_px4 is not None and len(feat_px4) > 0:
             print(f"[{run_folder}] Generating PX4 Trajectory plot (Visualizing Segments)...")
             plot_full_trajectory_with_spans(
                 t=t_px4, features=feat_px4, spans=spans_px4, 
                 title=f"Trajectory [Segment Check]: PX4 ({run_folder})", 
                 save_path=str(run_dir / f"features_px4_seg_check_{run_folder}.png"),
-                line_color='tab:green' # 초록색
+                line_color='tab:green' 
             )
             
             if turn_px4 and len(turn_px4) > 0:
@@ -412,19 +415,17 @@ if __name__ == "__main__":
                     t=t_turn, features=feat_turn, 
                     title=f"Trajectory [Isolated Turn]: PX4 ({run_folder})", 
                     save_path=str(run_dir / f"features_px4_turn_seg_{run_folder}.png"),
-                    line_color='tab:green' # 초록색
+                    line_color='tab:green' 
                 )
 
-        # =============================================================
-        # 5. 플롯 2 & 3 - ArduPilot 궤적 및 세그먼트 플롯 (주황색)
-        # =============================================================
+    
         if feat_ardu is not None and len(feat_ardu) > 0:
             print(f"[{run_folder}] Generating ArduPilot Trajectory plot (Visualizing Segments)...")
             plot_full_trajectory_with_spans(
                 t=t_ardu, features=feat_ardu, spans=spans_ardu, 
                 title=f"Trajectory [Segment Check]: ArduPilot ({run_folder})", 
                 save_path=str(run_dir / f"features_ardupilot_seg_check_{run_folder}.png"),
-                line_color='tab:orange' # 주황색
+                line_color='tab:orange' 
             )
             
             if turn_ardu and len(turn_ardu) > 0:
@@ -433,7 +434,7 @@ if __name__ == "__main__":
                     t=t_turn, features=feat_turn, 
                     title=f"Trajectory [Isolated Turn]: ArduPilot ({run_folder})", 
                     save_path=str(run_dir / f"features_ardupilot_turn_seg_{run_folder}.png"),
-                    line_color='tab:orange' # 주황색
+                    line_color='tab:orange' 
                 )
 
     print("\n[Info] All combined XY and segmentation plots generated successfully!")
