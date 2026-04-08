@@ -494,6 +494,20 @@ def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) ->
         return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
     else:
         return ["gz", "sim", verbose, "-r", world_sdf]
+    
+
+def _wait_gcs_connected(sitl_log: Path, timeout_s: float = 10.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        if sitl_log.exists():
+            text = sitl_log.read_text(errors="ignore")
+            if "partner IP:" in text:
+                return True
+            if "No connection to the ground control station" not in text and "Ready for takeoff" in text:
+                return True
+        time.sleep(1.0)
+        print(f"[INFO] Waiting GCS(QGroundControl, fake GCS) for Gazebo to initialize...")
+    return False
 
 
 def _finalize_runner(runner, timeout: float = 2.0) -> None:
@@ -669,7 +683,7 @@ def run_once(
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for fake GCS to initialize...")
 
         fGCS = _popen("gcs_fake", 
-                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=1.0), 
+                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=5.0), 
                       cwd=logs_dir, log_path=gcs_log)
         current["gcs"] = fGCS
 
@@ -726,6 +740,11 @@ def run_once(
         sitl = _popen("sitl", _run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir, log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl
 
+    if headless:
+        ok = _wait_gcs_connected(sitl_log, timeout_s=30.0)
+        if not ok:
+            print("[WARN] fake GCS connection was not established in time")
+
     time.sleep(startup_delay_s)
     runner = PX4MissionRunner(scenario_path=scenario_path)
     runner.start()
@@ -733,6 +752,7 @@ def run_once(
     t0 = time.time()
 
     while True:
+        # 1) user interrupt
         if stop["flag"]:
             print("[STOP] user interrupt")
             _finalize_runner(runner)
@@ -774,6 +794,7 @@ def run_once(
     _finalize_proc(current.get("gcs"))
     current["gcs"] = None
 
+    time.sleep(startup_delay_s)
     print('[HIT] move to next iteration')
 
     return rc
@@ -835,6 +856,24 @@ def _collect_px4_logs(px4_dir: Path, run_dir: Path):
 
     print(f"[INFO] PX4 log moved: {dst_ulg_file}")
     return True
+
+
+def _cleanup_failed_ulg(run_dir: Path):
+    raw_dir = run_dir / "px4_logs" / "raw"
+    if not raw_dir.exists():
+        return
+
+    ulg_files = list(raw_dir.glob("*.ulg"))
+
+    if not ulg_files:
+        return
+
+    for f in ulg_files:
+        try:
+            f.unlink()
+            print(f"[CLEANUP] removed {f}")
+        except Exception as e:
+            print(f"[WARN] failed to remove {f}: {e}")
 
 
 def _load_scenario_yaml_px4(run_dir: Path) -> PX4ScenarioConfig:
@@ -1035,19 +1074,32 @@ def main() -> int:
 
             # Attempt to collect logs from PX4 SITL build directory based on sitl.log output and 
             # check if .ulg file is successfully moved to run_dir. If not, retry the run up to 3 times.
-            if _collect_px4_logs(cfg.px4_dir, run_dir):
+            success_log = _collect_px4_logs(cfg.px4_dir, run_dir)
+            
+            if rc == 0 and success_log:
                 break
 
-            if attempt < cfg.max_retries and not stop["flag"]:
-                print(f"[WARN] No .ulg collected for {run_dir.name}; retrying")
+            # delete failed logs to avoid confusion in the next attempt
+            _cleanup_failed_ulg(run_dir)
+
+            # timeout retry
+            if rc == 124:
+                print(f"[RETRY] Timeout detected → retrying ({attempt}/{cfg.max_retries})")
+
+            # log failure retry
+            elif not success_log:
+                print(f"[RETRY] No .ulg collected → retrying ({attempt}/{cfg.max_retries})")
+
+            # other errors (e.g., mission fail)
             else:
-                print(f"[ERROR] Failed to collect .ulg for {run_dir.name} after {attempt} attempt(s)")
+                print(f"[RETRY] rc={rc} → retrying ({attempt}/{cfg.max_retries})")
+
+            # last attempt
+            if attempt == cfg.max_retries:
+                print(f"[ERROR] Failed to run and collect logsafter {attempt} attempts")
                 rc = max(rc, 1)
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)
-
-    # Kill GCS and end SITL
-
 
     return overall_rc
 

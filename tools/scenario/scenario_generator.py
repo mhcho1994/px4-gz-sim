@@ -148,7 +148,6 @@ def make_turn_3pts(
     turn_deg: float,
     alt_m: float,
     speed_m_s: float,
-    takeoff_alt_m: float,
     land: bool = True, 
 ) -> MissionSpec:
     """
@@ -243,7 +242,7 @@ def make_turn_3pts(
         name=f"turn3_settle_{int(round(turn_deg))}deg",
         home_position=home_position,
         command=commands,
-        takeoff_alt_m=takeoff_alt_m,
+        takeoff_alt_m=alt_m,
         waypoints_ned=waypoints_ned,
         waypoints_lla=waypoints_lla,
         speed_m_s=speeds,
@@ -501,23 +500,22 @@ def main() -> int:
                 'turn-deg must be a float or "random"'
             ) from e
         
-    def parse_takeoff_alt_m(v: str):
+    def parse_alt_m(v: str):
         if v.lower() == "random":
             return "random"
         try:
             return float(v)
         except ValueError as e:
             raise argparse.ArgumentTypeError(
-                'takeoff-alt-m must be a float or "random"'
+                'alt-m must be a float or "random"'
             ) from e
     
     turn3.add_argument("--settle-m", type=float, default=10.0)
-    turn3.add_argument("--leg1-m", type=float, default=25.0)
-    turn3.add_argument("--leg2-m", type=float, default=25.0)
+    turn3.add_argument("--leg1-m", type=float, default=50.0)
+    turn3.add_argument("--leg2-m", type=float, default=50.0)
     turn3.add_argument("--turn-deg", type=parse_turn_deg, default=90, help='Turn angle (deg) or "random"')
-    turn3.add_argument('--alt-m', type=float, default=10.0)
+    turn3.add_argument('--alt-m', type=parse_alt_m, default=10, help='Altitude (m) or "random"')
     turn3.add_argument('--speed-m-s', type=float, default=6.0)
-    turn3.add_argument('--takeoff-alt-m', type=parse_takeoff_alt_m, default=10, help='Takeoff altitude (m) or "random"')
     turn3.add_argument('--land', type=bool, default=True, help="Whether to land at the end of the mission")
 
     # --------------------------------------------------------------
@@ -541,10 +539,10 @@ def main() -> int:
             else:
                 turn_deg = float(args.turn_deg)
 
-            if args.takeoff_alt_m == "random":
-                takeoff_alt_m = float(np.random.uniform(5.0, 50.0))
+            if args.alt_m == "random":
+                alt_m = float(np.random.uniform(5.0, 50.0))
             else:                
-                takeoff_alt_m = float(args.takeoff_alt_m)  
+                alt_m = float(args.alt_m)  
 
             mission = make_turn_3pts(
                 home_position=args.home_lla,
@@ -552,9 +550,8 @@ def main() -> int:
                 leg1_m=args.leg1_m,
                 leg2_m=args.leg2_m,
                 turn_deg=turn_deg,
-                alt_m=args.alt_m,
+                alt_m=alt_m,
                 speed_m_s=args.speed_m_s,
-                takeoff_alt_m=takeoff_alt_m,
                 land=args.land,
             )
         else:

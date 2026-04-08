@@ -35,9 +35,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Fake GCS heartbeat sender")
     parser.add_argument(
         "--connect",
-        default="udpin:127.0.0.1:14550",
+        default="udp:127.0.0.1:14550",
         help="pymavlink connection string for sending GCS heartbeat "
-             "(default: udpout:127.0.0.1:14550)",
+             "(default: udp:127.0.0.1:14550)",
     )
     parser.add_argument(
         "--rate-hz",

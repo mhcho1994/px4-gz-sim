@@ -39,7 +39,7 @@ import threading
 from enum import Enum, auto
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, List
 
 import yaml
 from pymavlink import mavutil
@@ -104,7 +104,7 @@ def _get(d: Dict[str, Any], path: str, default=None):
     return cur
 
 
-def parse_connect_url(scn: Dict[str, Any]) -> str:
+def _parse_connect_url(scn: Dict[str, Any]) -> str:
     """
     Convert scenario MAVLink connection URLs into pymavlink format.
 
@@ -155,7 +155,7 @@ def parse_connect_url(scn: Dict[str, Any]) -> str:
     return f"udpin:127.0.0.1:14550"
 
 
-def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
+def _build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
     """
     Build raw MAVLink mission items from scenario.yaml.
 
@@ -183,13 +183,13 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
     home_alt = float(home[2])
 
     takeoff_alt = float(_get(scn, "common.scenario.takeoff_alt_m", 10.0))
-    do_land = bool(_get(scn, "common.scenario.land", True))
     commands = _get(scn, "common.scenario.command", [])
     waypoints = _get(scn, "common.scenario.waypoints_lla", [])
     speeds = _get(scn, "common.scenario.speed_m_s", [])
 
     items = []
     has_takeoff = False
+    do_land = False
 
     for i, cmd in enumerate(commands):
         if cmd is None:
@@ -204,7 +204,7 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
         wp = waypoints[i] if i < len(waypoints) else None
 
         if cmd == mavutil.mavlink.MAV_CMD_NAV_TAKEOFF:
-            has_takeoff = False
+            has_takeoff = True
             p1, p2, p3, p4 = 0, 0, 0, float('nan')
             p5, p6, p7 = home_lat, home_lon, takeoff_alt
 
@@ -226,6 +226,7 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
             p4 = p5 = p6 = p7 = 0
 
         elif cmd == mavutil.mavlink.MAV_CMD_NAV_LAND:
+            do_land = True
             p1, p2, p3, p4 = 0, 0, 0, float('nan')
             p5, p6, p7 = home_lat, home_lon, 0
 
@@ -244,6 +245,9 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list, float, bool]:
 
     if not items:
         raise ValueError("No mission items were generated")
+    
+    # override has_takeoff for Ardupilot: AUTO mode does not perform takeoff in Ardupilot
+    has_takeoff = False
 
     return items, takeoff_alt, has_takeoff, do_land
 
@@ -412,13 +416,13 @@ class ArduPilotMissionRunner:
 
             result = msg.result
             if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                print(f"COMMAND_ACK OK: cmd={command_id}")
+                print(f"[PX4] COMMAND_ACK OK: cmd={command_id}")
                 return True
 
-            print(f"COMMAND_ACK FAILED: cmd={command_id}, result={result}")
+            print(f"[PX4] COMMAND_ACK FAILED: cmd={command_id}, result={result}")
             return False
 
-        print(f"COMMAND_ACK TIMEOUT: cmd={command_id}")
+        print(f"[PX4] COMMAND_ACK TIMEOUT: cmd={command_id}")
         return False
 
     def _clear_mission(self, m, timeout: float = 5.0) -> bool:
@@ -442,9 +446,9 @@ class ArduPilotMissionRunner:
                 return True
 
             if msg.get_type() == "STATUSTEXT":
-                print(f"AP: {msg.text}")
+                print(f"[MISSION] AP: {msg.text}")
 
-        print("MISSION_CLEAR timeout")
+        print("[MISSION] Mission clear timeout")
         return False
 
     def _upload_mission_items(self, m, items: list[dict], timeout: float = 30.0) -> bool:
@@ -476,10 +480,10 @@ class ArduPilotMissionRunner:
                 )
 
                 if not req:
-                    raise RuntimeError("MISSION upload timeout")
+                    raise RuntimeError("[MISSION] missionupload timeout")
 
                 if req.get_type() == "STATUSTEXT":
-                    print(f"AP: {req.text}")
+                    print(f"[MISSION] AP: {req.text}")
                     continue
 
                 if req.get_type() == "MISSION_ACK":
@@ -490,7 +494,7 @@ class ArduPilotMissionRunner:
                 if req.get_type() in ("MISSION_REQUEST", "MISSION_REQUEST_INT"):
                     seq = req.seq
                     if seq < 0 or seq >= len(items):
-                        print(f"[MISSION_UPLOAD] Invalid mission request seq={seq}")
+                        print(f"[MISSION] Invalid mission request seq={seq}")
                         return False
 
                     it = items[seq]
@@ -546,22 +550,211 @@ class ArduPilotMissionRunner:
 
         return None
 
-    def _set_mode(self, m, mode_name: str) -> None:
+    def _decode_statustext(self, msg) -> str:
+        text = getattr(msg, "text", "")
+        if isinstance(text, bytes):
+            text = text.decode(errors="ignore")
+        return str(text).strip()
+
+    def _is_blocking_preflight_text(self, text: str) -> bool:
+        t = text.lower()
+
+        blocking_keywords = [
+            "prearm:",
+            "arm:",
+            "arming denied",
+            "ekf",
+            "gps",
+            "check",
+            "calibration",
+            "gyro",
+            "accel",
+            "compass",
+            "baro",
+            "not healthy",
+            "need position estimate",
+            "waiting for home",
+        ]
+
+        ignore_keywords = [
+            "armed",
+            "disarmed",
+            "flying",
+            "mode",
+            "throttle",
+            "mission",
+        ]
+
+        if any(k in t for k in ignore_keywords):
+            return False
+
+        return any(k in t for k in blocking_keywords)
+
+    def _wait_ready_to_arm(
+        self,
+        m,
+        timeout: float = 60.0,
+        stable_ready_s: float = 2.0,
+        no_error_hold_s: float = 2.0,
+    ) -> bool:
         """
-        Request a flight mode change.
+        Wait until Ardupilot is stably ready to arm.
 
-        ArduPilot modes include:
-            STABILIZE
-            GUIDED
-            AUTO
-            LOITER
-            etc.
+        Readiness conditions
+        --------------------
+        1. Pre-arm check passed from SYS_STATUS
+        2. EKF attitude is healthy
+        3. EKF horizontal velocity is healthy
+        4. EKF horizontal absolute position is healthy
+        (optional if require_global_position=False)
+        5. No recent blocking pre-arm / EKF related STATUSTEXT error for
+        at least `no_error_hold_s`
+        6. All required readiness conditions remain continuously satisfied for
+        at least `stable_ready_s`
+
+        Parameters
+        ----------
+        m :
+            pymavlink connection
+        timeout : float
+            Overall timeout in seconds.
+        stable_ready_s : float
+            Required continuous ready duration before success.
+        no_error_hold_s : float
+            Minimum time since the last blocking error text.
+
+        Returns
+        -------
+        bool
+            True if ready to arm, False on timeout.
         """
+        t0 = time.time()
 
-        m.set_mode(mode_name)
+        prearm_ok = False
+        ekf_attitude_ok = False
+        ekf_velocity_ok = False
+        ekf_position_ok = False
 
-        # Short delay to allow the autopilot to process the request
-        time.sleep(0.5)
+        last_error_text = None
+        last_error_time = 0.0
+        ready_since = None
+
+        while time.time() - t0 < timeout:
+            self._check_stop()
+
+            msg = m.recv_match(
+                type=["SYS_STATUS", "EKF_STATUS_REPORT", "STATUSTEXT"],
+                blocking=True,
+                timeout=1.0,
+            )
+
+            now = time.time()
+
+            if msg is None:
+                continue
+
+            mtype = msg.get_type()
+
+            if mtype == "SYS_STATUS":
+                health = msg.onboard_control_sensors_health
+
+                if health & mavutil.mavlink.MAV_SYS_STATUS_PREARM_CHECK:
+                    if not prearm_ok:
+                        print("[MONITOR] pre-arm check passed")
+                    prearm_ok = True
+                else:
+                    prearm_ok = False
+                    ready_since = None
+
+            elif mtype == "EKF_STATUS_REPORT":
+                flags = msg.flags
+
+                ekf_attitude_ok = bool(flags & mavutil.mavlink.EKF_ATTITUDE)
+                ekf_velocity_ok = bool(flags & mavutil.mavlink.EKF_VELOCITY_HORIZ)
+                ekf_position_ok = bool(flags & mavutil.mavlink.EKF_POS_HORIZ_ABS)
+
+                # If any required EKF condition drops, reset stable timer
+                ekf_ready = ekf_attitude_ok and ekf_velocity_ok and ekf_position_ok
+
+                if not ekf_ready:
+                    ready_since = None
+
+            elif mtype == "STATUSTEXT":
+                text = self._decode_statustext(msg)
+                if text:
+                    print(f"[AP] {text}")
+
+                if text and self._is_blocking_preflight_text(text):
+                    last_error_text = text
+                    last_error_time = now
+                    ready_since = None
+
+            # Evaluate current readiness
+            no_recent_error = (now - last_error_time) >= no_error_hold_s
+            all_ready = prearm_ok and ekf_ready and no_recent_error
+
+            if all_ready:
+                if ready_since is None:
+                    ready_since = now
+
+                if now - ready_since >= stable_ready_s:
+                    print("[MONITOR] vehicle ready to arm")
+                    print("[MONITOR] " f"prearm_ok={prearm_ok}, " f"ekf_ok={ekf_ready}, " f"last_error={last_error_text!r}")
+                    return True
+            else:
+                ready_since = None
+
+        print("[MONITOR] ready-to-arm timeout")
+        print("[MONITOR] final state: " f"prearm_ok={prearm_ok}, " f"ekf_ok={ekf_ready}, " f"last_error={last_error_text!r}")        
+        return False
+
+    # def _wait_prearm_ok(self, m, timeout=60):
+    #     """
+    #     Wait until vehicle passes pre-arm checks.
+    #     """
+
+    #     t0 = time.time()
+
+    #     while time.time() - t0 < timeout:
+
+    #         msg = m.recv_match(type="SYS_STATUS", blocking=True, timeout=1)
+
+    #         if msg is None:
+    #             continue
+
+    #         health = msg.onboard_control_sensors_health
+
+    #         if health & mavutil.mavlink.MAV_SYS_STATUS_PREARM_CHECK:
+    #             print("[MONITOR] pre-arm check passed")
+    #             return True
+
+    #     print("[MONITOR] pre-arm check timeout")
+    #     return False
+    
+    # def _wait_ekf_ready(self, m, timeout=60.0) -> bool:
+    #     """
+    #     Wait until EKF reports healthy state.
+    #     """
+    #     t0 = time.time()
+
+    #     while time.time() - t0 < timeout:
+
+    #         msg = m.recv_match(type="EKF_STATUS_REPORT", blocking=True, timeout=1.0)
+    #         if msg is None:
+    #             continue
+
+    #         flags = msg.flags
+
+    #         attitude_ok = flags & mavutil.mavlink.EKF_ATTITUDE
+    #         pos_ok = flags & mavutil.mavlink.EKF_POS_HORIZ_ABS
+    #         vel_ok = flags & mavutil.mavlink.EKF_VELOCITY_HORIZ
+
+    #         if attitude_ok and pos_ok and vel_ok:
+    #             print("[MONITOR] EKF check passed")
+    #             return True
+
+    #     print("[MONITOR] EKF not ready, timeout")
+    #     return False
 
     def _arm(self, m) -> None:
         """
@@ -583,6 +776,23 @@ class ArduPilotMissionRunner:
             done=False,
             success=False,
         )
+
+    def _set_mode(self, m, mode_name: str) -> None:
+        """
+        Request a flight mode change.
+
+        ArduPilot modes include:
+            STABILIZE
+            GUIDED
+            AUTO
+            LOITER
+            etc.
+        """
+
+        m.set_mode(mode_name)
+
+        # Short delay to allow the autopilot to process the request
+        time.sleep(0.5)
 
     def _guided_takeoff(self, m, takeoff_alt_m: float, timeout: float = 60.0) -> None:
         self._set_status(MissionState.TAKING_OFF, f"takeoff to {takeoff_alt_m:.1f} m")
@@ -787,61 +997,99 @@ class ArduPilotMissionRunner:
             else:
                 print(f"[MONITOR] seq={seq}, cmd={cmd}, non-waypoint item")
 
-            # Stop if last waypoint reached or passed           
-            if cmd in {mavutil.mavlink.MAV_CMD_NAV_LAND, mavutil.mavlink.MAV_CMD_NAV_VTOL_LAND}:
-                print(f"[MONITOR] landing command detected at seq={seq}")
-                return True
-            
+            # Stop if last waypoint reached or passed                      
             if seq_to_land is not None and seq >= seq_to_land:
                 print(f"[MONITOR] landing sequence detected: seq={seq} (land_seq={seq_to_land})")
                 return True
 
-    def _wait_prearm_ok(self, m, timeout=60):
-        """
-        Wait until vehicle passes pre-arm checks.
-        """
+    def _request_message_interval(self, m, message_id: int, hz: float) -> None:
+        interval_us = int(1e6 / hz)
+        print(f"[DEBUG] request message_id={message_id}, hz={hz}, interval_us={interval_us}")
 
+        m.mav.command_long_send(
+            m.target_system,
+            m.target_component,
+            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+            0,
+            message_id,      # param1: message id
+            interval_us,     # param2: interval in usec
+            0, 0, 0, 0, 0
+        )
+
+    def _wait_landed(
+        self,
+        m,
+        timeout: float = 120.0,
+        alt_threshold_m: float = 0.15,
+        vz_threshold_mps: float = 0.2,
+        stable_s: float = 2.0,
+    ) -> bool:
+        """
+        Wait until vehicle is considered landed.
+
+        Landing decision priority
+        -------------------------
+        1. EXTENDED_SYS_STATE says ON_GROUND -> success
+        2. Otherwise fallback:
+        - vehicle becomes disarmed, OR
+        - relative altitude is low and vertical speed is small for a while
+
+        Notes
+        -----
+        ArduPilot may not continuously emit EXTENDED_SYS_STATE unless requested,
+        so this function does not rely on it exclusively.
+        """
         t0 = time.time()
+        stable_since = None
+
+        rel_alt_m = None
+        vz_mps = None
+        armed = True
 
         while time.time() - t0 < timeout:
+            self._check_stop()
 
-            msg = m.recv_match(type="SYS_STATUS", blocking=True, timeout=1)
+            msg = m.recv_match(
+                type=["EXTENDED_SYS_STATE", "HEARTBEAT", "GLOBAL_POSITION_INT"],
+                blocking=True,
+                timeout=1.0,
+            )
+
+            now = time.time()
 
             if msg is None:
                 continue
 
-            health = msg.onboard_control_sensors_health
+            mtype = msg.get_type()
 
-            if health & mavutil.mavlink.MAV_SYS_STATUS_PREARM_CHECK:
-                print("[MONITOR] pre-arm check passed")
-                return True
+            if mtype == "EXTENDED_SYS_STATE":
+                if msg.landed_state == mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND:
+                    print("[MONITOR] Vehicle is on ground (EXTENDED_SYS_STATE)")
+                    return True
 
-        print("[MONITOR] pre-arm check timeout")
-        return False
-    
-    def _wait_ekf_ready(self, m, timeout=60.0) -> bool:
-        """
-        Wait until EKF reports healthy state.
-        """
-        t0 = time.time()
+            elif mtype == "GLOBAL_POSITION_INT":
+                # relative_alt: millimeters above home
+                rel_alt_m = msg.relative_alt * 1e-3
 
-        while time.time() - t0 < timeout:
+                # vz: cm/s, positive down in MAVLink GLOBAL_POSITION_INT
+                vz_mps = msg.vz * 1e-2
 
-            msg = m.recv_match(type="EKF_STATUS_REPORT", blocking=True, timeout=1.0)
-            if msg is None:
-                continue
+            low_alt = (rel_alt_m is not None) and (abs(rel_alt_m) <= alt_threshold_m)
+            low_vspeed = (vz_mps is not None) and (abs(vz_mps) <= vz_threshold_mps)
 
-            flags = msg.flags
+            if low_alt and low_vspeed:
+                if stable_since is None:
+                    stable_since = now
+                elif now - stable_since >= stable_s:
+                    print(
+                        f"[MONITOR] Vehicle considered landed "
+                        f"(rel_alt={rel_alt_m:.2f} m, vz={vz_mps:.2f} m/s)"
+                    )
+                    return True
+            else:
+                stable_since = None
 
-            attitude_ok = flags & mavutil.mavlink.EKF_ATTITUDE
-            pos_ok = flags & mavutil.mavlink.EKF_POS_HORIZ_ABS
-            vel_ok = flags & mavutil.mavlink.EKF_VELOCITY_HORIZ
-
-            if attitude_ok and pos_ok and vel_ok:
-                print("[MONITOR] EKF check passed")
-                return True
-
-        print("[MONITOR] EKF not ready, timeout")
+        print("[MONITOR] landed wait timeout")
         return False
 
     def _wait_disarmed(self, m, timeout: float = 120.0) -> bool:
@@ -861,11 +1109,11 @@ class ArduPilotMissionRunner:
             armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
 
             if not armed:
-                print("[DISARM] vehicle disarmed")
+                print("[DISARM] Vehicle disarmed")
                 self._set_status(MissionState.COMPLETED, "mission completed", done=True, success=True)
                 return True
 
-        print("[DISARM] timeout waiting for disarm")
+        print("[DISARM] Timeout waiting for disarm")
         raise TimeoutError("Vehicle did not disarm")
 
     def _run(self) -> None:
@@ -885,10 +1133,10 @@ class ArduPilotMissionRunner:
         try:
             # Load scenario configuration and parse
             scn = yaml.safe_load(self.scenario_path.read_text(encoding="utf-8")) or {}
-            items, takeoff_alt, has_takeoff, do_land = build_items_from_scenario(scn)
+            items, takeoff_alt, has_takeoff, do_land = _build_items_from_scenario(scn)
 
             # Get scenario connection URL to pymavlink format
-            connect = parse_connect_url(scn)
+            connect = _parse_connect_url(scn)
 
             # Establish MAVLink connection assign instance
             self._set_status(MissionState.CONNECTING, f"connecting to {connect}")
@@ -911,8 +1159,9 @@ class ArduPilotMissionRunner:
             self._check_stop()
 
             # Check readiness
-            self._wait_prearm_ok(m)
-            self._wait_ekf_ready(m)
+            # self._wait_prearm_ok(m)
+            # self._wait_ekf_ready(m)
+            self._wait_ready_to_arm(m)
 
             # Clear and upload mission
             self._clear_mission(m)
@@ -957,9 +1206,13 @@ class ArduPilotMissionRunner:
             # Stop if requested
             self._check_stop()
 
-            # Waiting for disarm
-            self._wait_disarmed(m, timeout=120.0)
-
+            # Wait for vehicle to report landed state and disarm
+            if do_land:
+                self._request_message_interval(m, 245, 2.0) # Not used
+                self._wait_landed(m, timeout=120.0)
+                self._wait_disarmed(m, timeout=180.0)
+            else:
+                pass # TODO: add support for landing without AUTO mode in PX4 and use _wait_landed  
 
         except Exception as e:
             # Any exception is treated as mission failure

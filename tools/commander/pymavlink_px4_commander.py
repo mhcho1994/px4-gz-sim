@@ -33,7 +33,7 @@ import threading
 from enum import Enum, auto
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, List
 
 import yaml
 from pymavlink import mavutil
@@ -97,7 +97,7 @@ def _get(d: Dict[str, Any], path: str, default=None):
     return cur
 
 
-def parse_connect_url(scn: Dict[str, Any]) -> str:
+def _parse_connect_url(scn: Dict[str, Any]) -> str:
     """
     Convert scenario MAVLink connection URLs into pymavlink format.
 
@@ -148,7 +148,7 @@ def parse_connect_url(scn: Dict[str, Any]) -> str:
     return f"udpin:127.0.0.1:14550"
 
 
-def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list[dict], float, bool]:
+def _build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list[dict], float, bool]:
     """
     Build raw MAVLink mission items from scenario.yaml.
 
@@ -176,13 +176,13 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list[dict], float, b
     home_alt = float(home[2])
 
     takeoff_alt = float(_get(scn, "common.scenario.takeoff_alt_m", 10.0))
-    do_land = bool(_get(scn, "common.scenario.land", True))
     commands = _get(scn, "common.scenario.command", [])
     waypoints = _get(scn, "common.scenario.waypoints_lla", [])
     speeds = _get(scn, "common.scenario.speed_m_s", [])
 
     items = []
     has_takeoff = False
+    do_land = False
 
     for i, cmd in enumerate(commands):
         if cmd is None:
@@ -219,6 +219,7 @@ def build_items_from_scenario(scn: Dict[str, Any]) -> Tuple[list[dict], float, b
             p4 = p5 = p6 = p7 = 0
 
         elif cmd == mavutil.mavlink.MAV_CMD_NAV_LAND:
+            do_land = True
             p1, p2, p3, p4 = 0.0, 0.0, 0.0, float("nan")
             p5, p6, p7 = home_lat, home_lon, 0.0
 
@@ -398,13 +399,13 @@ class PX4MissionRunner:
 
             result = msg.result
             if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                print(f"COMMAND_ACK OK: cmd={command_id}")
+                print(f"[PX4] COMMAND_ACK OK: cmd={command_id}")
                 return True
 
-            print(f"COMMAND_ACK FAILED: cmd={command_id}, result={result}")
+            print(f"[PX4] COMMAND_ACK FAILED: cmd={command_id}, result={result}")
             return False
 
-        print(f"COMMAND_ACK TIMEOUT: cmd={command_id}")
+        print(f"[PX4] COMMAND_ACK TIMEOUT: cmd={command_id}")
         return False
 
     def _clear_mission(self, m, timeout: float = 5.0) -> bool:
@@ -428,9 +429,9 @@ class PX4MissionRunner:
                 return True
 
             if msg.get_type() == "STATUSTEXT":
-                print(f"AP: {msg.text}")
+                print(f"[MISSION] AP: {msg.text}")
 
-        print("MISSION_CLEAR timeout")
+        print("[MISSION] Mission clear timeout")
         return False
     
     def _upload_mission_items(self, m, items: list[dict], timeout: float = 30.0) -> bool:
@@ -462,10 +463,10 @@ class PX4MissionRunner:
                 )
 
                 if not req:
-                    raise RuntimeError("MISSION upload timeout")
+                    raise RuntimeError("[MISSION] Mission upload timeout")
 
                 if req.get_type() == "STATUSTEXT":
-                    print(f"AP: {req.text}")
+                    print(f"[MISSION] AP: {req.text}")
                     continue
 
                 if req.get_type() == "MISSION_ACK":
@@ -476,7 +477,7 @@ class PX4MissionRunner:
                 if req.get_type() in ("MISSION_REQUEST", "MISSION_REQUEST_INT"):
                     seq = req.seq
                     if seq < 0 or seq >= len(items):
-                        print(f"[MISSION_UPLOAD] Invalid mission request seq={seq}")
+                        print(f"[MISSION] Invalid mission request seq={seq}")
                         return False
 
                     it = items[seq]
@@ -497,9 +498,9 @@ class PX4MissionRunner:
                     )
 
                     sent.add(seq)
-                    print(f"[MISSION_UPLOAD] Sent mission item seq={seq}, cmd={it['command']}")
+                    print(f"[MISSION] Sent mission item seq={seq}, cmd={it['command']}")
 
-        print("[MISSION_UPLOAD] Mission upload timeout")
+        print("[MISSION] Mission upload timeout")
         return False
         
     def _read_mission_item(self, m, seq: int, timeout: float = 5.0):
@@ -531,63 +532,130 @@ class PX4MissionRunner:
                 return msg
 
         return None
-  
-    def _wait_sensor_health_ok(self, m, timeout: float = 60.0) -> bool:
-        """
-        Wait for PX4 sensor readiness.
+    
+    def _decode_statustext(self, msg) -> str:
+        text = getattr(msg, "text", "")
+        if isinstance(text, bytes):
+            text = text.decode(errors="ignore")
+        return str(text).strip()
 
-        Minimal heuristic:
-        - SYS_STATUS health available
+    def _is_blocking_preflight_text(self, text: str) -> bool:
+        t = text.lower()
+        bad_keywords = [
+            "preflight fail",
+            "arming denied",
+            "resolve system health failures first",
+            "ekf2 missing data",
+            "no connection",
+            "accel #0 fail",
+            "gyro #0 fail",
+            "gps failure",
+            "health failures",
+        ]
+        return any(k in t for k in bad_keywords)
+
+    def _wait_ready_to_arm(
+        self,
+        m,
+        timeout: float = 60.0,
+        stable_ready_s: float = 2.0,
+        no_error_hold_s: float = 2.0,
+        require_global_position: bool = True,
+    ) -> bool:
         """
+        Wait until PX4 is genuinely ready to arm.
+
+        Conditions:
+        - PX4 HEARTBEAT observed
+        - SYS_STATUS reports enabled sensors are healthy
+        - optional GLOBAL_POSITION_INT observed
+        - no recent blocking STATUSTEXT preflight errors
+        - conditions remain good for stable_ready_s seconds
+        """
+        self._set_status(MissionState.HEARTBEAT_OK, "waiting for readiness before arming")
 
         t0 = time.time()
+        ready_since = None
+
+        px4_hb_seen = False
+        sys_status_seen = False
+        global_pos_seen = False
+
+        sensors_enabled = 0
+        sensors_health = 0
+
+        last_error_text = None
+        last_error_time = 0.0
+
+        last_print_t = 0.0
 
         while time.time() - t0 < timeout:
+            self._check_stop()
 
-            msg = m.recv_match(type=["SYS_STATUS"], blocking=True, timeout=1.0)
+            msg = m.recv_match(
+                type=["HEARTBEAT", "SYS_STATUS", "GLOBAL_POSITION_INT", "STATUSTEXT"],
+                blocking=True,
+                timeout=0.5,
+            )
+            now = time.time()
 
-            if msg is None:
-                continue
+            if msg is not None:
+                mtype = msg.get_type()
 
-            enabled = msg.onboard_control_sensors_enabled
-            health = msg.onboard_control_sensors_health
+                if mtype == "HEARTBEAT":
+                    px4_hb_seen = True
 
-            missing_health = enabled & ~health
+                elif mtype == "SYS_STATUS":
+                    sys_status_seen = True
+                    sensors_enabled = int(msg.onboard_control_sensors_enabled)
+                    sensors_health = int(msg.onboard_control_sensors_health)
 
-            if missing_health == 0:
-                print("[MONITOR] sensor health check passed")
-                return True
-            elif missing_health == 65536:
-                print("[MONITOR] sensor health check passed (no radio control)")
-                return True
+                elif mtype == "GLOBAL_POSITION_INT":
+                    global_pos_seen = True
 
-        print("[READINESS] timeout waiting for global position")
+                elif mtype == "STATUSTEXT":
+                    text = self._decode_statustext(msg)
+                    print(f"[PX4] {text}")
+
+                    if self._is_blocking_preflight_text(text):
+                        last_error_text = text
+                        last_error_time = now
+
+            sensor_ok = False
+            if sys_status_seen:
+                missing_health = sensors_enabled & ~sensors_health
+                sensor_ok = (missing_health == 0) or (missing_health == 65536)
+
+            error_ok = (last_error_text is None) or ((now - last_error_time) >= no_error_hold_s)
+            pos_ok = (global_pos_seen if require_global_position else True)
+
+            ready = px4_hb_seen and sys_status_seen and sensor_ok and pos_ok and error_ok
+
+            if ready:
+                if ready_since is None:
+                    ready_since = now
+
+                if now - ready_since >= stable_ready_s:
+                    print("[MONITOR] PX4 ready to arm")
+                    return True
+            else:
+                ready_since = None
+
+            if now - last_print_t > 1.0:
+                last_print_t = now
+                print("[MONITOR] " f"hb={px4_hb_seen}, " f"sys={sys_status_seen}, " f"sensor_ok={sensor_ok}, " f"global_pos={global_pos_seen}, " f"recent_error={last_error_text}")
+                if sys_status_seen and missing_health == 0:
+                    print("[MONITOR] sensor health check passed")
+                elif sys_status_seen and missing_health == 65536:
+                    print("[MONITOR] sensor health check passed (no radio control)")
+
+        print("[MONITOR] timeout waiting for PX4 readiness")
+        print("[MONITOR] final bits: " f"enabled=0x{sensors_enabled:08x}, " f"health=0x{sensors_health:08x}")
+
+        if last_error_text:
+            print(f"[MONITOR] last blocking error: {last_error_text}")
         return False
-
-    def _wait_global_position_ok(self, m, timeout: float = 60.0) -> bool:
-        """
-        Wait for PX4 estimator / global position readiness.
-
-        Minimal heuristic:
-        - GLOBAL_POSITION_INT observed
-        """
-
-        t0 = time.time()
-
-        while time.time() - t0 < timeout:
-
-            msg = m.recv_match(type=["GLOBAL_POSITION_INT"], blocking=True, timeout=1.0)
-
-            if msg is None:
-                continue
-
-            if msg.get_type() == "GLOBAL_POSITION_INT":
-                print("[MONITOR] global position information check passed")
-                return True
-
-        print("[MONITOR] timeout waiting for global position")
-        return False
-
+    
     def _arm(self, m) -> bool:
         self._set_status(MissionState.ARMING, "arming vehicle")
 
@@ -756,6 +824,21 @@ class PX4MissionRunner:
                 print(f"[MONITOR] reached/passed land sequence seq={seq}")
                 return True
 
+    def _wait_landed(self, m, timeout: float = 120.0) -> bool:
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            self._check_stop()
+
+            msg = m.recv_match(type="EXTENDED_SYS_STATE", blocking=True, timeout=1.0)
+            if msg is None:
+                continue
+
+            if msg.landed_state == mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND:
+                print("[MONITOR] Vehicle is on ground")
+                return True
+
+        raise TimeoutError("Vehicle did not report landed state")
+
     def _wait_disarmed(self, m, timeout: float = 180.0) -> bool:
         t0 = time.time()
 
@@ -768,7 +851,7 @@ class PX4MissionRunner:
 
             armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
             if not armed:
-                print("[DISARM] vehicle disarmed")
+                print("[DISARM] Vehicle disarmed")
                 self._set_status(MissionState.COMPLETED, "mission completed", done=True, success=True)
                 return True
 
@@ -791,10 +874,10 @@ class PX4MissionRunner:
         try:
             # Load scenario configuration and parse
             scn = yaml.safe_load(self.scenario_path.read_text(encoding="utf-8")) or {}
-            items, takeoff_alt, has_takeoff, do_land = build_items_from_scenario(scn)
+            items, takeoff_alt, has_takeoff, do_land = _build_items_from_scenario(scn)
 
             # Get scenario connection URL to pymavlink format
-            connect = parse_connect_url(scn)
+            connect = _parse_connect_url(scn)
 
             # Establish MAVLink connection assign instance
             self._set_status(MissionState.CONNECTING, f"connecting to {connect}")
@@ -817,8 +900,7 @@ class PX4MissionRunner:
             self._check_stop()
 
             # Check readiness
-            self._wait_sensor_health_ok(m, timeout=60.0)
-            self._wait_global_position_ok(m, timeout=60.0)
+            self._wait_ready_to_arm(m, timeout=60.0, stable_ready_s=2.0, no_error_hold_s=2.0, require_global_position=True)
 
             # Clear and upload mission
             self._clear_mission(m)
@@ -828,7 +910,11 @@ class PX4MissionRunner:
             self._check_stop()
 
             # Set auto mode and arming
-            self._set_mode_auto_mission(m)
+            if has_takeoff:
+                self._set_mode_auto_mission(m)
+            else:
+                pass # TODO: add support for takeoff without AUTO mode in PX4
+
             self._arm(m)
 
             # Stop if requested
@@ -843,8 +929,12 @@ class PX4MissionRunner:
             # Stop if requested
             self._check_stop()
 
-            # Waiting for disarm
-            self._wait_disarmed(m, timeout=180.0)
+            # Wait for vehicle to report landed state and disarm
+            if do_land:
+                self._wait_landed(m, timeout=120.0)
+                self._wait_disarmed(m, timeout=180.0)
+            else:
+                pass # TODO: add support for landing without AUTO mode in PX4 and use _wait_landed     
 
         except Exception as e:
             self._set_status(
@@ -875,7 +965,7 @@ def main():
     runner._run()
 
     status = runner.get_status()
-    print(f"Mission finished: {status.state.name}, success={status.success}")
+    print(f"[RUNNER] Mission finished: {status.state.name}, success={status.success}")
 
 if __name__ == "__main__":
     main()
