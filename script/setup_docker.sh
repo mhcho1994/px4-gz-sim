@@ -201,11 +201,12 @@ prepare_host_dirs() {
 
     run_script "$PROJECT_ROOT/install/gazebo.sh" --install binary ??
 
-    ensure_dir "$PROJECT_ROOT/data"
-    ensure_dir "$PROJECT_ROOT/ws"
-    ensure_dir "$PROJECT_ROOT/ros2"
-    ensure_dir "$PROJECT_ROOT/gz"
     ensure_dir "$PROJECT_ROOT/ap"
+    ensure_dir "$PROJECT_ROOT/data"
+    ensure_dir "$PROJECT_ROOT/gz"
+    ensure_dir "$PROJECT_ROOT/ros2"
+    ensure_dir "$PROJECT_ROOT/ap"
+    ensure_dir "$PROJECT_ROOT/ws"
     ensure_dir "$PROJECT_ROOT/.docker_home"
 }
 

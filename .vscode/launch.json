@@ -143,7 +143,7 @@
       }
     },
     {
-      "name": "Debug: SVM Test",
+      "name": "Debug: SVM",
       "type": "python",
       "request": "launch",
       "python": "${workspaceFolder}/.venv/bin/python",
@@ -159,6 +159,21 @@
         "PYTHONUNBUFFERED": "1"
       }
     },
-
+    {
+      "name": "Debug: Trajectory Pre-Processing",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "program": "${workspaceFolder}/ws/trajectory_processing/trajectory_processor.py",
+      "args": [
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
   ]
 }
