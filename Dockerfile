@@ -62,7 +62,16 @@ RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selectio
     apt-get update && \
     apt-get install -y --no-install-recommends \
         sudo \
-        locales && \
+        locales \
+        ca-certificates \
+        bash \
+        git \
+        curl \
+        wget \
+        gnupg2 \
+        lsb-release \
+        software-properties-common \
+        tzdata && \
     locale-gen en_US.UTF-8 && \
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
@@ -76,8 +85,8 @@ RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selectio
 # - create and set permissions for XDG runtime directory
 # - setup environmental variable for container user to run dependencies installation
 # -----------------------------------------------------------------------------
-RUN groupadd -f -g "${GID_INPUT}" input && \
-    groupadd -f -g "${GID_RENDER}" render && \
+RUN if ! getent group input >/dev/null 2>&1; then groupadd -g "${GID_INPUT}" input; fi && \
+    if ! getent group render >/dev/null 2>&1; then groupadd -g "${GID_RENDER}" render; fi && \
     groupadd --gid "${GID_USER}" user && \
     useradd --uid "${UID_USER}" --gid "${GID_USER}" --create-home --shell /bin/bash user && \
     usermod -aG sudo,plugdev,dialout,input,render,video user && \
@@ -117,8 +126,8 @@ USER user
 
 RUN bash /tmp/install/base.sh
 RUN bash /tmp/install/ros2.sh --ros-distro humble
-RUN bash /tmp/install/gazebo.sh --install binary
-RUN bash /tmp/install/autopilot.sh --mode deps --with-ardupilot
+RUN bash /tmp/install/gazebo.sh --install binary --phase deps
+RUN bash /tmp/install/autopilot.sh --mode deps --with-ardupilot --phase deps
 RUN bash /tmp/install/extra.sh --mode deps
 
 # switch back to root for final system-level operations

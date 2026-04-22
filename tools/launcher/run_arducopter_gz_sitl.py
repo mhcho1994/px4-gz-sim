@@ -316,6 +316,45 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         pass
 
 
+def _ensure_waf_ready(ap_dir: Path) -> None:
+    """Ensure ArduPilot waf submodule/bootstrap is present."""
+    waf = ap_dir / "modules" / "waf"
+    waf_light = ap_dir / "modules" / "waf" / "waf-light"
+
+    if waf.exists() and waf_light.exists():
+        return
+
+    print("[INFO] Missing waf or waf-light. Initializing submodules...")
+    subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=ap_dir)
+
+    if not waf.exists() or not waf_light.exists():
+        raise RuntimeError(
+            "waf bootstrap failed: './waf' or 'modules/waf/waf-light' still missing."
+        )
+
+
+def _configure_ardupilot(ap_dir: Path) -> None:
+    """
+    Run waf configure robustly.
+
+    ArduPilot may fetch waf submodule on the first call and ask to run again,
+    so we allow one retry.
+    """
+    _ensure_waf_ready(ap_dir)
+
+    for attempt in (1, 2):
+        try:
+            print(f"[INFO] Configuring ArduPilot SITL (attempt {attempt})...")
+            subprocess.run(["./waf", "configure", "--board", "sitl"], cwd=ap_dir, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == 1:
+                print("[WARN] Initial configure failed. Retrying after submodule/bootstrap check...")
+                _ensure_waf_ready(ap_dir)
+                continue
+            raise RuntimeError("ArduPilot waf configure failed after retry.") from e
+
+
 def _ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
     """
     Ensure ArduPilot SITL binary exists. If not, build it.
@@ -343,24 +382,17 @@ def _ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
 
     print("[INFO] ArduPilot not built. Building SITL...")
 
-    # configure (safe to re-run)
-    subprocess.run(
-        ["./waf", "configure", "--board", "sitl"],
-        cwd=ap_dir,
-        check=True,
-    )
+    # Important: configure may need a retry after waf submodule bootstrap
+    _configure_ardupilot(ap_dir)
 
-    # build
-    subprocess.run(
-        ["./waf", vehicle],
-        cwd=ap_dir,
-        check=True,
-    )
+    print(f"[INFO] Building ArduPilot target: {vehicle}")
+    subprocess.run(["./waf", vehicle], cwd=ap_dir)
 
     if not binary.exists():
-        raise RuntimeError("Build finished but binary not found.")
+        raise RuntimeError(f"Build finished but binary not found: {binary}")
 
     print(f"[INFO] Build complete: {binary}")
+
     return binary
 
 

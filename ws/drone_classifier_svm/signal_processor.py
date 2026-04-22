@@ -296,6 +296,26 @@ def process_rosbag_flight_data(csv_path):
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
         return None, None, None, None, None, None
 
+def process_camera_recovered_flight_data(csv_path):
+    try:
+        data = np.genfromtxt(csv_path, delimiter=',', names=True)
+        t_loc = data['timestamp']
+        x, y, z = data['xsmooth'], data['ysmooth'], data['zsmooth']
+        vx, vy, vz = np.gradient(x, t_loc), np.gradient(y, t_loc), np.gradient(z, t_loc)
+
+        extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
+        if extracted is None: return None, None, None, None, None, None
+
+        t_full, feat_full = extracted
+        segments, spans = extract_flight_segments(t_full, feat_full)
+
+        return x, y, t_full, feat_full, segments, spans
+
+    except Exception as e:
+        print(f"[Camera Recovered Extract Error] {csv_path}: {e}")
+        return None, None, None, None, None, None
+
+
 
 def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_color):
     if features is None or len(features) == 0: return

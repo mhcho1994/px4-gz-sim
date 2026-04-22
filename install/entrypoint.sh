@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# entrypoint.sh — align container user UID/GID with host, run setup, drop privileges
+# entrypoint.sh — align container user UID/GID with host, optionally run project setup, drop privileges
 
-# --------------------------
-# Defaults
-# --------------------------
 DEBUG="false"
 USER_NAME="user"
+WORKSPACE="/home/${USER_NAME}/FIRE_flightstack_sim"
+INSTALL_DIR="${WORKSPACE}/install"
 CHOWN_PATHS=()
 
 help() {
@@ -18,24 +17,21 @@ Options:
   --debug           Enable command tracing (set -x)
   --chown PATH      Recursively chown PATH to ${USER_NAME}:${USER_NAME}
                     Can be specified multiple times.
+  --skip-setup      Skip first-time project setup
 
 Environment:
   HOST_UID          Required host user id
   HOST_GID          Required host group id
-  HOST_USER_NAME    Optional host user name (for logging)
-  HOST_GROUP_NAME   Optional host group name (for logging)
-
-Examples:
-  docker run \\
-    -e HOST_UID=\$(id -u) \\
-    -e HOST_GID=\$(id -g) \\
-    <image> --chown /home/user/FIRE_flightstack_sim -- bash
+  HOST_USER_NAME    Optional host user name
+  HOST_GROUP_NAME   Optional host group name
 EOF
 }
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+SKIP_SETUP="true"
 CMD=()
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) help; exit 0 ;;
@@ -45,12 +41,22 @@ while [[ $# -gt 0 ]]; do
       CHOWN_PATHS+=("$2")
       shift 2
       ;;
-    --) shift; CMD=("$@"); break ;;
+    --skip-setup)
+      SKIP_SETUP="true"
+      shift
+      ;;
+    --)
+      shift
+      CMD=("$@")
+      break
+      ;;
     -*)
       die "Unknown option: $1 (use --help)"
       ;;
     *)
-      CMD=("$@"); break ;;
+      CMD=("$@")
+      break
+      ;;
   esac
 done
 
@@ -93,38 +99,39 @@ done
 
 SETUP_FLAG="/home/${USER_NAME}/.setup_done"
 
-if [[ ! -f "${SETUP_FLAG}" ]]; then
+if [[ "${SKIP_SETUP}" != "true" && ! -f "${SETUP_FLAG}" ]]; then
   echo "[ENTRYPOINT] Running first-time setup..."
 
   sudo -u "${USER_NAME}" -H bash -lc "
     set -euo pipefail
+    cd '${WORKSPACE}'
 
-    if [[ -f /install/autopilot.sh ]]; then
-      echo '[SETUP] autopilot setup'
-      bash /install/autopilot.sh --mode setup --with-ardupilot
+    if [[ -f '${INSTALL_DIR}/autopilot.sh' ]]; then
+      echo '[SETUP] autopilot build and environment setup'
+      bash '${INSTALL_DIR}/autopilot.sh' --phase build --with-ardupilot --project-root '${WORKSPACE}'
+      bash '${INSTALL_DIR}/autopilot.sh' --phase env --with-ardupilot --project-root '${WORKSPACE}'
     fi
 
-    if [[ -f /install/extra.sh ]]; then
-      echo '[SETUP] extra setup'
-      bash /install/extra.sh --mode setup
+    if [[ -f '${INSTALL_DIR}/extra.sh' ]]; then
+      echo '[SETUP] extra environment setup'
+      bash '${INSTALL_DIR}/extra.sh' --phase env --project-root '${WORKSPACE}'
     fi
 
-    if [[ -f /install/usersetup.sh ]]; then
+    if [[ -f '${INSTALL_DIR}/usersetup.sh' ]]; then
       echo '[SETUP] user setup'
-      bash /install/usersetup.sh
+      bash '${INSTALL_DIR}/usersetup.sh' --project-root '${WORKSPACE}'
     fi
   "
 
   touch "${SETUP_FLAG}"
   chown "${USER_NAME}:${USER_NAME}" "${SETUP_FLAG}"
-
   echo "[ENTRYPOINT] Setup completed."
 else
-  echo "[ENTRYPOINT] Setup already done. Skipping."
+  echo "[ENTRYPOINT] Setup already done or skipped."
 fi
 
 if [[ ${#CMD[@]} -gt 0 ]]; then
-  exec sudo -u "${USER_NAME}" -H -- "${CMD[@]}"
+  exec sudo -u "${USER_NAME}" -H bash -lc "cd '${WORKSPACE}' && exec \"$@\"" -- "${CMD[@]}"
 else
-  exec sudo -u "${USER_NAME}" -H -- bash
+  exec sudo -u "${USER_NAME}" -H bash -lc "cd '${WORKSPACE}' && exec bash"
 fi
