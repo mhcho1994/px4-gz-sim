@@ -1,138 +1,188 @@
 import torch
 import torch.nn as nn
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
-from model import DroneTrajectoryCNN
-from dataset import build_training_pipeline
+from model import DroneTrajectoryCNN, DroneTrajectoryCNNLSTM
+import os
+from pathlib import Path
 
-def analyze_feature_importance():
-    """각 특성이 분류에 미치는 영향 분석"""
+def analyze_feature_importance(model_type="cnn"):
+    """기존 trained 모델의 feature importance 분석
     
-    # 데이터 로드
-    train_loader, test_loader = build_training_pipeline(
-        px4_dir="../../data/px4_logs", 
-        ardu_dir="../../data/ardu_logs", 
-        batch_size=32, 
-        test_ratio=0.2,
-        window_size=100,
-        step_size=50
-    )
+    Args:
+        model_type: "cnn" or "lstm"
+    """
 
-    # 모델 로드
-    model = DroneTrajectoryCNN(num_features=7)
-    model.load_state_dict(torch.load("drone_real_model.pth"))
+    model = None
+    model_file = None
+    
+    # ==========================================
+    # 1. Find available model files
+    # ==========================================
+    print("\nSearching for model files...\n")
+    
+    model_files = {
+        "cnn": sorted(glob.glob('drone_cnn_*.pth')),
+        "lstm": sorted(glob.glob('drone_cnn_lstm_*.pth'))
+    }
+    
+    if model_type.lower() not in model_files:
+        print(f"❌ Error: Unknown model type '{model_type}'")
+        print(f"   Available types: {list(model_files.keys())}")
+        return
+    
+    available_models = model_files[model_type.lower()]
+    
+    if not available_models:
+        print(f"❌ No {model_type.upper()} model files found!")
+        print(f"   Looking for: drone_{model_type.lower()}_*.pth")
+        return
+    
+    print(f"Available {model_type.upper()} models ({len(available_models)}):")
+    for i, f in enumerate(available_models):
+        print(f"  [{i}] {f}")
+    
+    # User selects CNN model
+    while True:
+        try:
+            cnn_idx = int(input(f"\nSelect CNN model [0-{len(available_models)-1}]: "))
+            if 0 <= cnn_idx < len(available_models):
+                pth_file = available_models[cnn_idx]
+                break
+            print("Invalid selection. Try again.")
+        except ValueError:
+            print("Please enter a valid number.")
+
+    # User selects CNN-LSTM model
+    while True:
+        try:
+            cnn_lstm_idx = int(input(f"Select CNN-LSTM model [0-{len(available_models)-1}]: "))
+            if 0 <= cnn_lstm_idx < len(available_models):
+                cnn_lstm_path = available_models[cnn_lstm_idx]
+                break
+            print("Invalid selection. Try again.")
+        except ValueError:
+            print("Please enter a valid number.")
+
+    # ==========================================
+    # 2. Load trained model
+    # ==========================================
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Device: {device}\n")
+
+    try:
+        if model_type.lower() == "cnn":
+            model = DroneTrajectoryCNN(num_features=10)
+        else:  # lstm
+            model = DroneTrajectoryCNNLSTM(num_features=10, lstm_hidden_size=32, num_lstm_layers=1)
+        
+        model.load_state_dict(torch.load(pth_file, map_location=device))
+        model.to(device)
+        print(f"✓ Model loaded successfully from: {pth_file}\n")
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
+        return
+    
     model.eval()
 
-    feature_names = ['Speed', 'Accel Mag', 'Jerk Mag', 'Curvature', 'Yaw Rate (Traj)', 'Yaw Rate (Att)', 'Slip Rate']
-
-    print(f"\n{'='*70}")
-    print("🔍 FEATURE IMPORTANCE ANALYSIS")
+    feature_names = ['h_smooth', 'heading', 'vh_smooth', 'speed_xy', 'ah', 'acc_norm_xy', 'j_alt', 'jerk_norm_xy', 'curvature_smooth', 'yaw_rate_smooth']
+    print(f"{'='*70}")
+    print(f"🔍 FEATURE IMPORTANCE ANALYSIS ({model_type.upper()})")
+    print(f"   Model: {pth_file}")
     print(f"{'='*70}\n")
 
-    # 1. 각 특성을 0으로 masking했을 때 정확도 변화 측정
-    print("📊 Permutation Importance (각 특성을 제거했을 때 정확도 변화)\n")
-    
-    # 기본 정확도 계산
-    baseline_correct = 0
-    baseline_total = 0
-    
-    all_outputs = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for batch_x, batch_y in test_loader:
-            outputs = model(batch_x)
-            all_outputs.append(outputs)
-            all_targets.append(batch_y)
-            _, predicted = torch.max(outputs.data, 1)
-            baseline_total += batch_y.size(0)
-            baseline_correct += (predicted == batch_y).sum().item()
-    
-    baseline_acc = baseline_correct / baseline_total
-    print(f"Baseline Accuracy: {baseline_acc*100:.2f}%\n")
-    
-    # 각 특성별 중요도 계산
-    importance_scores = []
-    
-    for feature_idx in range(7):
-        feature_drop_correct = 0
-        feature_drop_total = 0
-        
-        with torch.no_grad():
-            for batch_x, batch_y in test_loader:
-                # 해당 특성을 0으로 masking
-                masked_batch = batch_x.clone()
-                masked_batch[:, feature_idx, :] = 0
-                
-                outputs = model(masked_batch)
-                _, predicted = torch.max(outputs.data, 1)
-                feature_drop_total += batch_y.size(0)
-                feature_drop_correct += (predicted == batch_y).sum().item()
-        
-        feature_drop_acc = feature_drop_correct / feature_drop_total
-        importance = baseline_acc - feature_drop_acc  # 양수면 중요함
-        importance_scores.append(importance * 100)  # 퍼센트로 변환
-        
-        direction = "↓" if importance > 0 else "↑"
-        print(f"{feature_idx+1}. {feature_names[feature_idx]:20s}: {importance*100:+.2f}% {direction}")
-    
-    # 정렬
-    sorted_indices = np.argsort(importance_scores)[::-1]
-    
-    print(f"\n{'─'*70}")
-    print("중요도 순서 (높음 → 낮음):\n")
-    for rank, idx in enumerate(sorted_indices, 1):
-        print(f"  {rank}. {feature_names[idx]:20s}: {importance_scores[idx]:+.2f}%")
-    
-    # 2. Conv1d 가중치 분석
-    print(f"\n{'─'*70}")
-    print("📈 First Conv1d Layer Weight Magnitude Analysis\n")
+    # ==========================================
+    # 3. Analyze Conv1d weights
+    # ==========================================
+    print("📈 Conv1d Layer Weight Analysis\n")
     
     conv1_weights = model.conv1.weight.data  # (out_channels, in_channels, kernel_size)
     # 각 입력 특성별로 가중치의 절댓값 평균
     feature_magnitude = np.mean(np.abs(conv1_weights.cpu().numpy()), axis=(0, 2))
     
+    # 정규화 (0-100)
+    feature_magnitude_norm = (feature_magnitude / feature_magnitude.max()) * 100
+    
     print("Average weight magnitude per feature in Conv1d:")
-    for i, name in enumerate(feature_names):
-        print(f"  {name:20s}: {feature_magnitude[i]:.4f}")
-
-    # 시각화
+    print(f"{'─'*50}")
+    
+    # 중요도 순서로 정렬
+    sorted_indices = np.argsort(feature_magnitude_norm)[::-1]
+    
+    for rank, idx in enumerate(sorted_indices, 1):
+        bar = "█" * int(feature_magnitude_norm[idx] / 5)
+        print(f"{rank}. {feature_names[idx]:20s}: {feature_magnitude_norm[idx]:6.2f} {bar}")
+    
+    print(f"{'─'*50}\n")
+    
+    # ==========================================
+    # 4. Visualize
+    # ==========================================
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
-    # Permutation Importance
-    colors = ['green' if x > 0 else 'red' for x in importance_scores]
-    axes[0].barh(feature_names, importance_scores, color=colors, alpha=0.7, edgecolor='black')
-    axes[0].set_xlabel('Importance (Accuracy Drop %)')
-    axes[0].set_title('Permutation Importance of Features')
-    axes[0].axvline(0, color='black', linestyle='-', linewidth=0.8)
-    axes[0].grid(alpha=0.3)
+    # 1) Weight Magnitude (정렬)
+    sorted_names = [feature_names[i] for i in sorted_indices]
+    sorted_magnitudes = [feature_magnitude_norm[i] for i in sorted_indices]
     
-    # Weight Magnitude
-    axes[1].bar(feature_names, feature_magnitude, color='steelblue', alpha=0.7, edgecolor='black')
-    axes[1].set_ylabel('Average Weight Magnitude')
-    axes[1].set_title('Conv1d Weight Magnitude Analysis')
+    colors = plt.cm.RdYlGn(np.linspace(0.3, 0.9, len(sorted_magnitudes)))
+    axes[0].barh(sorted_names, sorted_magnitudes, color=colors, edgecolor='black', linewidth=1.5)
+    axes[0].set_xlabel('Normalized Importance Score', fontsize=12, fontweight='bold')
+    axes[0].set_title(f'Feature Importance ({model_type.upper()})\nBased on Conv1d Weights', 
+                      fontsize=13, fontweight='bold')
+    axes[0].set_xlim(0, 105)
+    for i, v in enumerate(sorted_magnitudes):
+        axes[0].text(v + 1, i, f'{v:.1f}', va='center', fontweight='bold')
+    axes[0].grid(alpha=0.3, axis='x')
+    
+    # 2) Weight Distribution by Feature
+    bp = axes[1].boxplot([conv1_weights.cpu().numpy()[:, i, :].flatten() for i in range(10)],
+                         labels=feature_names,
+                         patch_artist=True,
+                         notch=True)
+    
+    for patch, color in zip(bp['boxes'], plt.cm.Set3(np.linspace(0, 1, 10))):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    axes[1].set_ylabel('Weight Value', fontsize=12, fontweight='bold')
+    axes[1].set_title(f'Weight Distribution per Feature\n({model_type.upper()})', 
+                      fontsize=13, fontweight='bold')
     axes[1].tick_params(axis='x', rotation=45)
     axes[1].grid(alpha=0.3, axis='y')
     
     plt.tight_layout()
-    plt.savefig('feature_importance.png', dpi=150)
-    print("\n✅ Feature importance visualization saved to 'feature_importance.png'")
     
-    # 해석
+    # 저장
+    output_file = f'feature_importance_{model_type.lower()}.png'
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    print(f"✅ Feature importance visualization saved to '{output_file}'")
+    plt.close(fig)
+    
+    # ==========================================
+    # 5. Summary
+    # ==========================================
     print(f"\n{'='*70}")
-    print("💡 INTERPRETATION")
-    print(f"{'='*70}")
+    print("💡 SUMMARY")
+    print(f"{'='*70}\n")
     
-    top_feature = feature_names[sorted_indices[0]]
-    top_importance = importance_scores[sorted_indices[0]]
+    top_feature = sorted_names[0]
+    top_importance = sorted_magnitudes[0]
     
-    print(f"\n✨ Most important feature: {top_feature}")
-    print(f"   - Removing this feature drops accuracy by {abs(top_importance):.2f}%")
-    
-    if top_importance > 0:
-        print(f"   - This suggests that PX4 and ArduPilot have different {top_feature.lower()}")
-    else:
-        print(f"   - Removing this feature IMPROVED accuracy - it might be noise!")
+    print(f"🏆 Most important feature: {top_feature}")
+    print(f"   Importance score: {top_importance:.2f}/100")
+    print(f"\n📊 Top 3 features:")
+    for i in range(min(3, len(sorted_names))):
+        print(f"   {i+1}. {sorted_names[i]:20s} ({sorted_magnitudes[i]:6.2f})")
     
 if __name__ == "__main__":
-    analyze_feature_importance()
+    import sys
+    
+    model_type = "cnn"  # 기본값
+    
+    if len(sys.argv) > 1:
+        model_type = sys.argv[1].lower()
+    
+    print(f"\nUsage: python3 feature_importance.py [cnn|lstm]\n")
+    
+    analyze_feature_importance(model_type)

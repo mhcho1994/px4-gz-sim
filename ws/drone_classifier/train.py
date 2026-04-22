@@ -4,6 +4,9 @@ import torch.optim as optim
 from model import DroneTrajectoryCNN, DroneTrajectoryCNNLSTM
 from dataset import build_training_pipeline 
 import sys
+from datetime import datetime
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
 
 PX4_FOLDER = "../../data/px4_logs"
 ARDU_FOLDER = "../../data/ardu_logs"
@@ -21,6 +24,9 @@ def main(model_type="cnn"):
     Args:
         model_type: 'cnn' (default) or 'cnn_lstm'
     """
+    # Generate timestamp for model filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    
     print(f"\n{'='*70}")
     print(f"Training {model_type.upper()} Model")
     print(f"{'='*70}\n")
@@ -36,10 +42,10 @@ def main(model_type="cnn"):
 
     # Model selection
     if model_type.lower() == "cnn":
-        model = DroneTrajectoryCNN(num_features=7)
+        model = DroneTrajectoryCNN(num_features=10)
         model_name = "Pure CNN"
     elif model_type.lower() == "cnn_lstm":
-        model = DroneTrajectoryCNNLSTM(num_features=7, lstm_hidden_size=32, num_lstm_layers=1)
+        model = DroneTrajectoryCNNLSTM(num_features=10, lstm_hidden_size=32, num_lstm_layers=1)
         model_name = "CNN-LSTM Hybrid"
     else:
         print(f"Unknown model type: {model_type}")
@@ -50,7 +56,36 @@ def main(model_type="cnn"):
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}\n")
     
-    criterion = nn.CrossEntropyLoss()
+    # ==========================================
+    # Compute class weights for balanced learning
+    # ==========================================
+    print("📊 Computing class weights for balanced learning...\n")
+    
+    all_labels = []
+    for batch_x, batch_y in train_loader:
+        all_labels.extend(batch_y.cpu().numpy().tolist())
+    all_labels = np.array(all_labels)
+    
+    unique, counts = np.unique(all_labels, return_counts=True)
+    print(f"Class distribution in training data:")
+    for label, count in zip(unique, counts):
+        class_name = "PX4" if label == 0 else "ArduPilot"
+        pct = 100 * count / len(all_labels)
+        print(f"  {class_name}: {count:5d} ({pct:6.2f}%)")
+    
+    class_weights = compute_class_weight(
+        'balanced',
+        classes=np.unique(all_labels),
+        y=all_labels
+    )
+    class_weights = torch.FloatTensor(class_weights)
+    
+    print(f"\nComputed class weights:")
+    print(f"  PX4 weight:       {class_weights[0]:.4f}")
+    print(f"  ArduPilot weight: {class_weights[1]:.4f}")
+    print(f"  → ArduPilot weighted {class_weights[1]/class_weights[0]:.2f}x higher\n")
+    
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
     
     best_test_acc = 0
@@ -96,8 +131,8 @@ def main(model_type="cnn"):
         if test_acc > best_test_acc:
             best_test_acc = test_acc
             patience_counter = 0
-            # Save model with type-specific filename
-            model_filename = f"drone_{model_type}.pth"
+            # Save model with type-specific filename and timestamp
+            model_filename = f"drone_{model_type}_{timestamp}.pth"
             torch.save(model.state_dict(), model_filename)
         else:
             patience_counter += 1
@@ -105,7 +140,7 @@ def main(model_type="cnn"):
                 print(f"\nEarly stopping at epoch {epoch+1} (no improvement for {patience} epochs)")
                 break
     
-    model_filename = f"drone_{model_type}.pth"
+    model_filename = f"drone_{model_type}_{timestamp}.pth"
     print(f"\n Training Complete - Best Test Accuracy: {best_test_acc:.1f}%")
     print(f"Weight saved to '{model_filename}'")
 

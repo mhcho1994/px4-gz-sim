@@ -9,36 +9,72 @@ import torch
 import glob
 import json
 from pathlib import Path
-from signal_processor import process_csv_odom
 from model import DroneTrajectoryCNN, DroneTrajectoryCNNLSTM
+from trajectory_processor import process_rosbag_flight_data
 
 print("="*90)
 print("REAL FLIGHT DATA CLASSIFICATION TEST")
 print("="*90)
 
 # ==========================================
-# 1. Load trained models
+# 1. Find available model files
+# ==========================================
+print("\nSearching for model files...")
+cnn_files = sorted(glob.glob('drone_cnn_*.pth'))
+cnn_lstm_files = sorted(glob.glob('drone_cnn_lstm_*.pth'))
+
+print(f"\nAvailable CNN models ({len(cnn_files)}):")
+for i, f in enumerate(cnn_files):
+    print(f"  [{i}] {f}")
+
+print(f"\nAvailable CNN-LSTM models ({len(cnn_lstm_files)}):")
+for i, f in enumerate(cnn_lstm_files):
+    print(f"  [{i}] {f}")
+
+# ==========================================
+# 2. Load trained models
 # ==========================================
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"\nDevice: {device}")
 
-# Load the best performing model (CNN-LSTM V2)
-model_cnn = DroneTrajectoryCNN(num_features=7).to(device)
-model_cnn.load_state_dict(torch.load('drone_cnn.pth', map_location=device))
+# User selects CNN model
+while True:
+    try:
+        cnn_idx = int(input(f"\nSelect CNN model [0-{len(cnn_files)-1}]: "))
+        if 0 <= cnn_idx < len(cnn_files):
+            cnn_path = cnn_files[cnn_idx]
+            break
+        print("Invalid selection. Try again.")
+    except ValueError:
+        print("Please enter a valid number.")
+
+# User selects CNN-LSTM model
+while True:
+    try:
+        cnn_lstm_idx = int(input(f"Select CNN-LSTM model [0-{len(cnn_lstm_files)-1}]: "))
+        if 0 <= cnn_lstm_idx < len(cnn_lstm_files):
+            cnn_lstm_path = cnn_lstm_files[cnn_lstm_idx]
+            break
+        print("Invalid selection. Try again.")
+    except ValueError:
+        print("Please enter a valid number.")
+
+model_cnn = DroneTrajectoryCNN(num_features=10).to(device)
+model_cnn.load_state_dict(torch.load(cnn_path, map_location=device))
 model_cnn.eval()
-print("[OK] Loaded: CNN model (drone_cnn.pth)")
+print(f"\n[OK] Loaded: CNN model ({cnn_path})")
 
 model_cnn_lstm = DroneTrajectoryCNNLSTM(
-    num_features=7, 
+    num_features=10, 
     lstm_hidden_size=32, 
     num_lstm_layers=1
 ).to(device)
-model_cnn_lstm.load_state_dict(torch.load('drone_cnn_lstm.pth', map_location=device))
+model_cnn_lstm.load_state_dict(torch.load(cnn_lstm_path, map_location=device))
 model_cnn_lstm.eval()
-print("[OK] Loaded: CNN-LSTM model (drone_cnn_lstm.pth)")
+print(f"[OK] Loaded: CNN-LSTM model ({cnn_lstm_path})")
 
 # ==========================================
-# 2. Create windows from features
+# 3. Create windows from features
 # ==========================================
 def create_windows(features, kernel_size=100, step_size=50):
     """Create windowed tensors from normalized features"""
@@ -53,7 +89,7 @@ def create_windows(features, kernel_size=100, step_size=50):
     return np.array(windows) if windows else None
 
 # ==========================================
-# 3. Classification function
+# 4. Classification function
 # ==========================================
 def classify_windows(windows, models, device):
     """Classify windowed features using all 3 models"""
@@ -88,13 +124,13 @@ def classify_windows(windows, models, device):
     return results
 
 # ==========================================
-# 4. Process all CSV odom files
+# 5. Process all CSV odom files
 # ==========================================
 print("\n" + "="*90)
 print("FINDING AND PROCESSING CSV ODOM FILES")
 print("="*90)
 
-csv_files = sorted(glob.glob('/home/gayeonslee/FIRE/flightstack_sim/data/ardu_logs/*_odom.csv'))
+csv_files = sorted(glob.glob('/home/gayeonslee/FIRE/flightstack_sim/data/realflight/*.csv'))
 
 print(f"\nFound {len(csv_files)} CSV odom files:")
 for f in csv_files[:10]:
@@ -116,16 +152,16 @@ for csv_file in csv_files:  # Test all files
     print(f"{'='*90}")
     
     # Load and process CSV file
-    result = process_csv_odom(csv_file)
+    result = process_rosbag_flight_data(csv_file)
     if result is None:
         print("[FAIL] Failed to process CSV file")
         continue
     
-    features, t_new, x, y, z, vx, vy, vz = result
+    t_loc, traj_raw, t_resampled, traj_resampled, features, segments, spans = result
     print(f"[OK] Extracted {len(features)} feature samples")
     
     # Print feature statistics (especially jerk)
-    feature_names = ['Speed', 'Accel_Mag', 'Jerk_Mag', 'Curvature', 'Yaw_Rate_Traj', 'Yaw_Rate_Att', 'Slip_Rate']
+    feature_names = ['Altitude', 'Heading', 'Vertical Velocity', 'Horizontal Speed', 'Vertical Acceleration', 'Horizontal Acceleration', 'Vertical Jerk', 'Horizontal Jerk', 'Curvature', 'Yaw Rate']
     print(f"\nFeature Statistics:")
     for i, name in enumerate(feature_names):
         print(f"  {name:20s}: mean={features[:, i].mean():8.4f}, std={features[:, i].std():8.4f}, "
@@ -171,7 +207,7 @@ for csv_file in csv_files:  # Test all files
     })
 
 # ==========================================
-# 5. Summary
+# 6. Summary
 # ==========================================
 print("\n" + "="*90)
 print("SUMMARY")
