@@ -15,4 +15,4 @@ cleanup() {
 trap cleanup EXIT
 
 xhost +local:docker
-docker compose up --build
+docker compose up

@@ -426,6 +426,15 @@ download_qgc_appimage() {
 
   local out="${QGC_DIR}/QGroundControl-x86_64.AppImage"
 
+  if [[ -f "${out}" ]]; then
+    echo ""
+    echo "==> QGroundControl AppImage already exists"
+    echo "    ${out}"
+    echo "    Skipping download."
+    echo ""
+    return 0
+  fi
+
   echo ""
   echo "==> Downloading QGroundControl AppImage"
   echo "    URL: ${QGC_URL}"

@@ -127,8 +127,8 @@ USER user
 RUN bash /tmp/install/base.sh
 RUN bash /tmp/install/ros2.sh --ros-distro humble
 RUN bash /tmp/install/gazebo.sh --install binary --phase deps
-RUN bash /tmp/install/autopilot.sh --mode deps --with-ardupilot --phase deps
-RUN bash /tmp/install/extra.sh --mode deps
+RUN bash /tmp/install/autopilot.sh --with-ardupilot --phase deps
+RUN bash /tmp/install/extra.sh --phase deps
 
 # switch back to root for final system-level operations
 USER root

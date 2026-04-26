@@ -4,9 +4,9 @@ version: "3.9"
 services:
   # FIRE flightstack simulator
   FIRE_flightstack_simulator:
-    container_name: flightstack_sim
-    hostname: flightstack_sim
-    image: flightstack_sim:latest
+    container_name: fire_flightstack_sim
+    hostname: fire_flightstack_sim
+    image: fire_flightstack_sim:latest
     build:
       context: .
       dockerfile: Dockerfile
