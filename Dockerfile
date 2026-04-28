@@ -127,6 +127,7 @@ USER user
 RUN bash /tmp/install/base.sh
 RUN bash /tmp/install/ros2.sh --ros-distro humble
 RUN bash /tmp/install/gazebo.sh --install binary --phase deps
+RUN bash /tmp/install/gazebo.sh --install binary --phase build
 RUN bash /tmp/install/autopilot.sh --with-ardupilot --phase deps
 RUN bash /tmp/install/extra.sh --phase deps
 
@@ -140,16 +141,6 @@ USER root
 # -----------------------------------------------------------------------------
 RUN bash /tmp/clean.sh && \
     rm -f /etc/apt/apt.conf.d/docker-clean || true
-
-# -----------------------------------------------------------------------------
-# Entrypoint setup
-# - copy entrypoint script
-# - make it executable
-# - set default shell for user to bash
-# -----------------------------------------------------------------------------
-COPY install/entrypoint.sh /tmp/install/entrypoint.sh
-RUN chmod +x /tmp/install/entrypoint.sh && \
-    chsh -s /bin/bash user
 
 # -----------------------------------------------------------------------------
 # Workspace setup
@@ -166,5 +157,5 @@ WORKDIR /home/user/FIRE_flightstack_sim
 # Container entrypoint
 # - defines the default command when container starts
 # -----------------------------------------------------------------------------
-ENTRYPOINT ["/tmp/install/entrypoint.sh"]
+ENTRYPOINT ["./install/entrypoint.sh"]
 CMD ["bash"]

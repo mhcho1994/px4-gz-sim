@@ -41,7 +41,7 @@ import re
 _THIS_FILE = Path(__file__).resolve()
 _TOOLS_DIR = _THIS_FILE.parents[1]
 _COMMANDER_DIR = _TOOLS_DIR / "commander"
-_QGC_DIR = _TOOLS_DIR / "QGC"
+_QGC_DIR = _TOOLS_DIR / "QGC" / "squashfs-root"
 _FAKE_GCS = _COMMANDER_DIR / "fake_gcs_heartbeat.py"
 
 if str(_COMMANDER_DIR) not in sys.path:
@@ -323,6 +323,8 @@ def _ensure_px4_built(px4_dir: Path) -> Path:
 
     binary = px4_dir / "build" / "px4_sitl_default" / "bin" / "px4"
 
+    print(f"[DEBUG] Checking for existing PX4 binary at: {binary}")
+
     # already built
     if binary.exists():
         print(f"[INFO] PX4 already built: {binary}")
@@ -455,7 +457,7 @@ def _run_qgc_cmd(out_port: int) -> list[str]:
     Launch QGroundControl (GCS).
     QGC automatically listens on UDP port 14550.
     """
-    qgc_bin = _QGC_DIR / "QGroundControl-x86_64.AppImage"
+    qgc_bin = _QGC_DIR / "AppRun"
     return [str(qgc_bin)]
 
 
@@ -491,7 +493,8 @@ def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) ->
     """
 
     if headless:
-        return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
+        # return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
+        return ["gz", "sim", verbose, "-s", "-r", world_sdf]
     else:
         return ["gz", "sim", verbose, "-r", world_sdf]
     
@@ -683,7 +686,7 @@ def run_once(
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for fake GCS to initialize...")
 
         fGCS = _popen("gcs_fake", 
-                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=5.0), 
+                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=10.0), 
                       cwd=logs_dir, log_path=gcs_log)
         current["gcs"] = fGCS
 
@@ -741,7 +744,7 @@ def run_once(
         current["sitl"] = sitl
 
     if headless:
-        ok = _wait_gcs_connected(sitl_log, timeout_s=30.0)
+        ok = _wait_gcs_connected(sitl_log, timeout_s=60.0)
         if not ok:
             print("[WARN] fake GCS connection was not established in time")
 
@@ -1031,6 +1034,7 @@ def main() -> int:
         scenario_path = run_dir / "scenario.yaml"
 
         # Set other configurations and overrides if headless mode is enabled
+        print(f"[DEBUG] cfg.px4_dir={cfg.px4_dir}")
         cfg = _apply_cli_overrides(cfg, args)
 
         # Confirm that PX4 is built

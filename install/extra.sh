@@ -479,6 +479,43 @@ setup_qgc_user_access() {
   echo ""
 }
 
+# env: extract AppImage so FUSE is not required
+extract_qgc_appimage() {
+
+  if [[ "${INSTALL_QGC}" != "true" ]]; then
+    return 0
+  fi
+
+  local appimg="${QGC_DIR}/QGroundControl-x86_64.AppImage"
+  local extracted="${QGC_DIR}/squashfs-root"
+
+  if [[ ! -f "${appimg}" ]]; then
+    echo "QGC AppImage not found:"
+    echo "  ${appimg}"
+    echo "Run --phase fetch first."
+    return 1
+  fi
+
+  if [[ -d "${extracted}" ]]; then
+    echo "==> QGC AppImage already extracted"
+    return 0
+  fi
+
+  echo ""
+  echo "==> Extracting QGroundControl AppImage (FUSE-free mode)"
+  echo ""
+
+  (
+    cd "${QGC_DIR}"
+    "${appimg}" --appimage-extract
+  )
+
+  echo ""
+  echo "Run QGC with:"
+  echo "  ${extracted}/AppRun"
+  echo ""
+}
+
 # --------------------------
 # Main
 # --------------------------
@@ -505,6 +542,7 @@ case "${PHASE}" in
     ;;
   env)
     setup_qgc_user_access
+    extract_qgc_appimage
     ;;
   all)
     install_common_packages
@@ -513,6 +551,7 @@ case "${PHASE}" in
     ensure_numpy_for_mavproxy
     verify_numpy_for_mavproxy
     setup_qgc_user_access
+    extract_qgc_appimage
     download_qgc_appimage
     ;;
 esac

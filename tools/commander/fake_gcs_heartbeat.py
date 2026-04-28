@@ -105,18 +105,37 @@ def main() -> int:
     # Optional short wait so the UDP socket is ready
     time.sleep(0.5)
 
+    # clock loop timer
+    last_print = 0.0
+    rx_count = 0
+
     while not stop["flag"]:
         try:
+            # 1) emptying UDP receive queue, PX4 sends hearbeat thru 14550
+            while True:
+                msg = m.recv_match(blocking=False)
+                if msg is None:
+                    break
+                rx_count += 1
+
+                now = time.time()
+
+            # 2) send fake GCS heartbeat
             m.mav.heartbeat_send(
                 mavutil.mavlink.MAV_TYPE_GCS,
                 mavutil.mavlink.MAV_AUTOPILOT_INVALID,
-                0,   # base_mode
-                0,   # custom_mode
-                0,   # system_status: MAV_STATE_UNINIT is okay for fake GCS presence
+                0,
+                0,
+                mavutil.mavlink.MAV_STATE_ACTIVE,
             )
-            print("[FAKE_GCS] heartbeat sent")
+
+            if now - last_print > 1.0:
+                print(f"[FAKE_GCS] heartbeat sent, drained_rx={rx_count}", flush=True)
+                rx_count = 0
+                last_print = now
+
         except Exception as e:
-            print(f"[FAKE_GCS] heartbeat send failed: {e}", file=sys.stderr)
+            print(f"[FAKE_GCS] loop failed: {e}", file=sys.stderr)
 
         time.sleep(period)
 

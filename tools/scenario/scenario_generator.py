@@ -453,7 +453,7 @@ def main() -> int:
     common_parser.add_argument(
         "--ardupilot-dir",
         type=str,
-        default="${FLIGHTSTACK_SIM_ROOT}/ap/ardupilot",
+        default="./ap/ardupilot",
     )
     common_parser.add_argument("--ardupilot-vehicle", type=str, default="ArduCopter")
     common_parser.add_argument("--ardupilot-frame", type=str, default="gazebo-iris")
@@ -467,7 +467,7 @@ def main() -> int:
     common_parser.add_argument(
         "--px4-dir",
         type=str,
-        default="${FLIGHTSTACK_SIM_ROOT}/ap/px4",
+        default="./ap/px4",
     )
     common_parser.add_argument("--px4-vehicle", type=int, default=4001)
     common_parser.add_argument("--px4-frame", type=str, default="gz_x500")

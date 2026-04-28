@@ -29,7 +29,7 @@ EOF
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-SKIP_SETUP="true"
+SKIP_SETUP="false"
 CMD=()
 
 while [[ $# -gt 0 ]]; do
@@ -97,7 +97,7 @@ for path in "${CHOWN_PATHS[@]}"; do
   fi
 done
 
-SETUP_FLAG="/home/${USER_NAME}/.setup_done"
+SETUP_FLAG="${WORKSPACE}/.docker_home/.setup_done"
 
 if [[ "${SKIP_SETUP}" != "true" && ! -f "${SETUP_FLAG}" ]]; then
   echo "[ENTRYPOINT] Running first-time setup..."
@@ -110,6 +110,11 @@ if [[ "${SKIP_SETUP}" != "true" && ! -f "${SETUP_FLAG}" ]]; then
       echo '[SETUP] autopilot build and environment setup'
       bash '${INSTALL_DIR}/autopilot.sh' --phase build --with-ardupilot --project-root '${WORKSPACE}'
       bash '${INSTALL_DIR}/autopilot.sh' --phase env --with-ardupilot --project-root '${WORKSPACE}'
+    fi
+
+    if [[ -f '${INSTALL_DIR}/gazebo.sh' ]]; then
+      echo '[SETUP] gazebo environment setup'
+      bash '${INSTALL_DIR}/gazebo.sh' --install binary --phase env
     fi
 
     if [[ -f '${INSTALL_DIR}/extra.sh' ]]; then
