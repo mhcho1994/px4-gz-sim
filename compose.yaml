@@ -21,13 +21,12 @@ services:
       - HOST_GID=${HOST_GID}
       - HOST_USER_NAME=${HOST_USER_NAME}
       - HOST_GROUP_NAME=${HOST_GROUP_NAME}
-      - LIBGL_ALWAYS_SOFTWARE=1
     network_mode: host
     ipc: host
     privileged: true
     tty: true
     stdin_open: true
-    shm_size: "2gb"
+    shm_size: "4gb"
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
       - ./:/home/user/FIRE_flightstack_sim:rw

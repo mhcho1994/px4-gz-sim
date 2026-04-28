@@ -551,8 +551,8 @@ case "${PHASE}" in
     ensure_numpy_for_mavproxy
     verify_numpy_for_mavproxy
     setup_qgc_user_access
-    extract_qgc_appimage
     download_qgc_appimage
+    extract_qgc_appimage
     ;;
 esac
 

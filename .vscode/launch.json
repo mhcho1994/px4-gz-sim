@@ -29,7 +29,7 @@
       "program": "${workspaceFolder}/tools/launcher/run_px4_gz_sitl.py",
       "args": [
         "--run-root", "${workspaceFolder}/data/sitl_logs",
-        "--startup-delay", "5",
+        "--startup-delay", "2",
         "--max-run-s", "300",
         "--verbose", "--headless",
       ],
