@@ -252,7 +252,7 @@ def make_turn_3pts(
 # ----------------------------------------------------------------------
 # Pattern 2: 4-Point Square
 # ----------------------------------------------------------------------
-def make_quad4(
+def make_quad_4pts(
     home_position: List[LLA],
     side1_m: float,
     side2_m: float,
@@ -616,7 +616,7 @@ def main() -> int:
     # quad4: square / rectangle / skewed parallelogram
     # -------------------------
     quad4 = subparsers.add_parser(
-        "quad4",
+        "quad4pts",
         parents=[common_parser],
     )
 
@@ -713,7 +713,7 @@ def main() -> int:
                 else float(args.speed_m_s)
             )
 
-            mission = make_quad4(
+            mission = make_quad_4pts(
                 home_position=args.home_lla,
                 settle_m=settle_m,
                 side1_m=side1_m,
