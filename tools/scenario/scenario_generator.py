@@ -252,42 +252,136 @@ def make_turn_3pts(
 # ----------------------------------------------------------------------
 # Pattern 2: 4-Point Square
 # ----------------------------------------------------------------------
-# def make_square4(size_m: float, alt_m: float, speed_m_s: float) -> MissionSpec:
-#     """
-#     Create a 4-point square trajectory in NED frame.
+def make_quad4(
+    home_position: List[LLA],
+    side1_m: float,
+    side2_m: float,
+    angle_deg: float,
+    alt_m: float,
+    speed_m_s: float,
+    settle_m: float = 10.0,
+    land: bool = True,
+) -> MissionSpec:
+    """
+    4-point quadrilateral mission.
 
-#     After takeoff from origin (0,0):
-#         WP1: (size, 0)
-#         WP2: (size, size)
-#         WP3: (0, size)
-#         WP4: (0, 0)
+    This generalizes:
+      - square      : side1_m == side2_m, angle_deg = 90
+      - rectangle   : side1_m != side2_m, angle_deg = 90
+      - parallelogram / skewed box : angle_deg != 90
 
-#     size_m : side length
-#     alt_m  : altitude above home (positive)
-#     """
+    Convention:
+      - NED frame: +N forward, +E right, +D down
+      - angle_deg is measured clockwise from the first leg direction
+        toward East.
 
-#     # Convert altitude to NED Down convention
-#     d = -float(alt_m)
+    Geometry:
+        P0 = (settle_m, 0, -alt)
+        P1 = P0 + side1 along North
+        P2 = P1 + side2 at angle_deg
+        P3 = P0 + side2 at angle_deg
 
-#     s = float(size_m)
+    Mission layout:
+      TAKEOFF
+      WP P0
+      DO_CHANGE_SPEED
+      WP P1
+      WP P2
+      WP P3
+      WP P0
+      LAND
+    """
 
-#     # Define square corners
-#     wps: List[NED] = [
-#         (s, 0.0, d),
-#         (s, s, d),
-#         (0.0, s, d),
-#         (0.0, 0.0, d),
-#     ]
+    if not home_position:
+        raise ValueError("home_position must be non-empty")
 
-#     return MissionSpec(
-#         name="square4",
-#         takeoff_alt_m=alt_m,
-#         speed_m_s=speed_m_s,
-#         waypoints_ned=wps,
-#         land=True,
-#     )
+    d = -float(alt_m)
+    settle = float(settle_m)
+    s1 = float(side1_m)
+    s2 = float(side2_m)
 
+    theta = np.radians(float(angle_deg))
 
+    # First edge direction: North
+    v1_n = s1
+    v1_e = 0.0
+
+    # Second edge direction: angle from North toward East
+    v2_n = s2 * np.cos(theta)
+    v2_e = s2 * np.sin(theta)
+
+    P0: NED = (settle, 0.0, d)
+    P1: NED = (P0[0] + v1_n, P0[1] + v1_e, d)
+    P2: NED = (P1[0] + v2_n, P1[1] + v2_e, d)
+    P3: NED = (P0[0] + v2_n, P0[1] + v2_e, d)
+
+    commands: List[int] = [
+        MAV_CMD_NAV_TAKEOFF,      # idx 0
+        MAV_CMD_NAV_WAYPOINT,     # idx 1: P0 settle point
+        MAV_CMD_DO_CHANGE_SPEED,  # idx 2
+        MAV_CMD_NAV_WAYPOINT,     # idx 3: P1
+        MAV_CMD_NAV_WAYPOINT,     # idx 4: P2
+        MAV_CMD_NAV_WAYPOINT,     # idx 5: P3
+        MAV_CMD_NAV_WAYPOINT,     # idx 6: back to P0
+    ]
+    if land:
+        commands.append(MAV_CMD_NAV_LAND)
+
+    waypoints_ned: List[Optional[NED]] = [
+        None,
+        P0,
+        None,
+        P1,
+        P2,
+        P3,
+        P0,
+    ]
+    if land:
+        waypoints_ned.append(None)
+
+    waypoints_lla: List[Optional[LLA]] = [
+        None,
+        ned_to_lla(P0, home_position),
+        None,
+        ned_to_lla(P1, home_position),
+        ned_to_lla(P2, home_position),
+        ned_to_lla(P3, home_position),
+        ned_to_lla(P0, home_position),
+    ]
+    if land:
+        waypoints_lla.append(None)
+
+    speeds: List[Optional[float]] = [
+        None,
+        None,
+        float(speed_m_s),
+        None,
+        None,
+        None,
+        None,
+    ]
+    if land:
+        speeds.append(None)
+
+    assert len(commands) == len(waypoints_ned) == len(waypoints_lla) == len(speeds)
+
+    if abs(side1_m - side2_m) < 1e-6 and abs(angle_deg - 90.0) < 1e-6:
+        name = "square4"
+    elif abs(angle_deg - 90.0) < 1e-6:
+        name = "rectangle4"
+    else:
+        name = f"quad4_{int(round(angle_deg))}deg"
+
+    return MissionSpec(
+        name=name,
+        home_position=home_position,
+        command=commands,
+        takeoff_alt_m=alt_m,
+        waypoints_ned=waypoints_ned,
+        waypoints_lla=waypoints_lla,
+        speed_m_s=speeds,
+        land=land,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -518,6 +612,33 @@ def main() -> int:
     turn3.add_argument('--speed-m-s', type=float, default=6.0)
     turn3.add_argument('--land', type=bool, default=True, help="Whether to land at the end of the mission")
 
+    # -------------------------
+    # quad4: square / rectangle / skewed parallelogram
+    # -------------------------
+    quad4 = subparsers.add_parser(
+        "quad4",
+        parents=[common_parser],
+    )
+
+    def parse_random_float(v: str):
+        if v.lower() == "random":
+            return "random"
+        try:
+            return float(v)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(
+                'value must be a float or "random"'
+            ) from e
+
+    quad4.add_argument("--settle-m", type=parse_random_float, default=10.0)
+    quad4.add_argument("--side1-m", type=parse_random_float, default=50.0)
+    quad4.add_argument("--side2-m", type=parse_random_float, default=50.0)
+    quad4.add_argument("--angle-deg", type=parse_random_float, default=90.0)
+    quad4.add_argument("--alt-m", type=parse_random_float, default=10.0)
+    quad4.add_argument("--speed-m-s", type=parse_random_float, default=6.0)
+    quad4.add_argument("--land", type=bool, default=True)
+
+
     # --------------------------------------------------------------
     # Parse CLI arguments
     # --------------------------------------------------------------
@@ -554,6 +675,55 @@ def main() -> int:
                 speed_m_s=args.speed_m_s,
                 land=args.land,
             )
+
+        elif args.pattern == "quad4":
+            settle_m = (
+                float(np.random.uniform(5.0, 20.0))
+                if args.settle_m == "random"
+                else float(args.settle_m)
+            )
+
+            side1_m = (
+                float(np.random.uniform(30.0, 120.0))
+                if args.side1_m == "random"
+                else float(args.side1_m)
+            )
+
+            side2_m = (
+                float(np.random.uniform(30.0, 120.0))
+                if args.side2_m == "random"
+                else float(args.side2_m)
+            )
+
+            angle_deg = (
+                float(np.random.uniform(45.0, 135.0))
+                if args.angle_deg == "random"
+                else float(args.angle_deg)
+            )
+
+            alt_m = (
+                float(np.random.uniform(5.0, 50.0))
+                if args.alt_m == "random"
+                else float(args.alt_m)
+            )
+
+            speed_m_s = (
+                float(np.random.uniform(3.0, 12.0))
+                if args.speed_m_s == "random"
+                else float(args.speed_m_s)
+            )
+
+            mission = make_quad4(
+                home_position=args.home_lla,
+                settle_m=settle_m,
+                side1_m=side1_m,
+                side2_m=side2_m,
+                angle_deg=angle_deg,
+                alt_m=alt_m,
+                speed_m_s=speed_m_s,
+                land=args.land,
+            )
+
         else:
             raise ValueError(f"Unsupported pattern: {args.pattern}")
 

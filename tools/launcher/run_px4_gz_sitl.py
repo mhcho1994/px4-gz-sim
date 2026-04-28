@@ -312,7 +312,7 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         pass
 
 
-def _ensure_px4_built(px4_dir: Path) -> Path:
+def _ensure_px4_built(px4_dir: Path, headless: bool) -> Path:
     """
     Ensure PX4 SITL binary exists. If not, build it.
 
@@ -332,11 +332,18 @@ def _ensure_px4_built(px4_dir: Path) -> Path:
 
     print("[INFO] PX4 not built. Building SITL...")
 
+    # pass environmental variables for SITL instance
+    px4_build_env = os.environ.copy()
+
+    if headless:
+        px4_build_env["HEADLESS"] = "1"
+
     # PX4 build (default SITL target)
     subprocess.run(
         ["make", "px4_sitl"],
         cwd=px4_dir,
         check=True,
+        env=px4_build_env,
     )
 
     if not binary.exists():
@@ -1037,8 +1044,8 @@ def main() -> int:
         print(f"[DEBUG] cfg.px4_dir={cfg.px4_dir}")
         cfg = _apply_cli_overrides(cfg, args)
 
-        # Confirm that PX4 is built
-        _ensure_px4_built(px4_dir=cfg.px4_dir)
+        # Confirm that PX4 is built: should delete and rebuild if headless/standalone options are changed to ensure correct build configuration
+        _ensure_px4_built(px4_dir=cfg.px4_dir, headless=args.headless)
 
         # Print configuration info
         print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")
