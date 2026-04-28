@@ -676,7 +676,7 @@ def main() -> int:
                 land=args.land,
             )
 
-        elif args.pattern == "quad4":
+        elif args.pattern == "quad4pts":
             settle_m = (
                 float(np.random.uniform(5.0, 20.0))
                 if args.settle_m == "random"
