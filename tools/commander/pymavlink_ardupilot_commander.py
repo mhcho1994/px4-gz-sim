@@ -438,7 +438,7 @@ class ArduPilotMissionRunner:
         )
         t0 = time.time()
         while time.time() - t0 < timeout:
-            msg = m.recv_match(type=["MISSION_ACK", "STATUSTEXT"], blocking=True, timeout=0.5)
+            msg = m.recv_match(type=["MISSION_ACK", "STATUSTEXT"], blocking=True, timeout=5.0)
             if msg is None:
                 continue
 
@@ -470,7 +470,7 @@ class ArduPilotMissionRunner:
         """
         self._set_status(MissionState.UPLOADING_MISSION, f"uploading {len(items)} items")
 
-        self._drain_mavlink(m, duration=0.5)
+        # self._drain_mavlink(m, duration=0.5)
 
         m.mav.mission_count_send(
             m.target_system,
@@ -486,9 +486,9 @@ class ArduPilotMissionRunner:
             for _ in range(len(items)):
 
                 req = m.recv_match(
-                    type=["MISSION_REQUEST_INT", "MISSION_ACK", "STATUSTEXT"],
+                    type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK", "STATUSTEXT"],
                     blocking=True,
-                    timeout=1.0,
+                    timeout=10.0,
                 )
 
                 if req is None:
@@ -532,27 +532,30 @@ class ArduPilotMissionRunner:
                     continue
 
                 if mtype == "MISSION_ACK":
-                    # ack_type = req.type
-                    # self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
-                    # return ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED
-
                     ack_type = req.type
+                    self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
+                    return ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED
 
-                    if ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED and len(sent) == len(items):
-                        print("[MISSION_UPLOAD] Mission accepted")
-                        self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
-                        return True
+                    # ack_type = req.type
 
-                    print(
-                        f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
-                        f"type={ack_type}, sent={len(sent)}/{len(items)}"
-                    )
+                    # ack_name = mavutil.mavlink.enums["MAV_MISSION_RESULT"][ack_type].name
+                    # print(f"[DEBUG] ACK TYPE {ack_type}: {ack_name}, sent={len(sent)}/{len(items)}")
 
-                    if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                        return False
+                    # if ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                    #     print("[MISSION_UPLOAD] Mission accepted")
+                    #     self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
+                    #     return True
 
-                    # ACCEPTED가 너무 일찍 오면 stale ACK일 가능성이 있으므로 무시
-                    continue
+                    # print(
+                    #     f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
+                    #     f"type={ack_type}, sent={len(sent)}/{len(items)}"
+                    # )
+
+                    # if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                    #     return False
+
+                    # # ACCEPTED가 너무 일찍 오면 stale ACK일 가능성이 있으므로 무시
+                    # continue
 
         print("[MISSION_UPLOAD] Mission upload timeout")
         return False
@@ -1186,8 +1189,20 @@ class ArduPilotMissionRunner:
             self._m = m
 
             # Explicitly set target IDs (common practice in ArduPilot SITL)
-            m.target_system = 1
-            m.target_component = 1
+            # m.target_system = 1
+            # m.target_component = 1
+            msg = m.recv_match(type="HEARTBEAT", blocking=True, timeout=60)
+            if msg is None:
+                raise RuntimeError("Heartbeat timeout")
+
+            m.target_system = msg.get_srcSystem()
+            m.target_component = msg.get_srcComponent()
+
+            print(
+                f"[HEARTBEAT] target_system={m.target_system}, "
+                f"target_component={m.target_component}"
+            )
+
 
             # Wait for autopilot heartbeat
             self._wait_heartbeat(m)
@@ -1196,7 +1211,7 @@ class ArduPilotMissionRunner:
             self._check_stop()
 
             # Check readiness
-            # self._wait_prearm_ok(m)
+            # self._wait_prearm_ok(m)missio
             # self._wait_ekf_ready(m)
             self._wait_ready_to_arm(m)
 

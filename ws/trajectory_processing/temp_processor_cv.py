@@ -117,7 +117,7 @@ def split_all_runs(
         df_run = df[df["run"] == run_name].copy()
         df_run = df_run.sort_values("frame").reset_index(drop=True)
 
-        run_dir = output_root / f"run_{idx:03d}" / "cogni_logs"
+        run_dir = output_root / f"run_{idx:03d}" / "ardu_logs"
         raw_dir = run_dir / "raw"
         processed_dir = run_dir / "processed"
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     # ./run_000/ardu_logs/processed/trajectory.csv
     # ...
 
-    input_csv = Path("./data/260417_flight_logs/all_runs/cogni_logs/raw/cognipilot_all_runs_trajectory.csv")
-    output_root = Path("./data/260417_flight_logs")
+    input_csv = Path("./data/260424_flight_logs/all_runs/ardupilot_all_runs_trajectory.csv")
+    output_root = Path("./data/260424_flight_logs")
 
     split_all_runs(input_csv=input_csv, output_root=output_root)

@@ -447,10 +447,10 @@ def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) ->
     Run the Gazebo Sim command.
 
     Example:
-      gz sim -v4 -r iris_runway.sdf
+      gz sim -v4 -r iris_runway.sdf "--headless-rendering"
     """
     if headless:
-        return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
+        return ["gz", "sim", verbose, "-s", "-r", world_sdf]
     else:
         return ["gz", "sim", verbose, "-r", world_sdf]
 
@@ -600,7 +600,7 @@ def run_once(
         current["gz"] = gz
 
     # GCS (MAVProxy Console and Map) second
-    if current.get("gcs") is None:
+    if (not headless) and current.get("gcs") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for GCS to initialize...")
 
