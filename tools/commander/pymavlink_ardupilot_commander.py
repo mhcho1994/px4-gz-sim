@@ -486,7 +486,7 @@ class ArduPilotMissionRunner:
             for _ in range(len(items)):
 
                 req = m.recv_match(
-                    type=["MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK", "STATUSTEXT"],
+                    type=["MISSION_REQUEST_INT", "MISSION_ACK", "STATUSTEXT"],
                     blocking=True,
                     timeout=1.0,
                 )
