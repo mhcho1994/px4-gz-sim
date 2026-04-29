@@ -421,10 +421,9 @@ def _find_px4_etc(px4_dir: Path) -> Path:
     )
 
 
-def _run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
-    cmd = [
-        str(px4_bin),
-    ]  
+def _run_sitl_cmd(sim_engine: str = 'gz', model: str = 'x500') -> list[str]:
+    # (px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]
+    cmd = ["make", "px4_sitl", f"{sim_engine}_{model}"]
     return cmd
 
 
@@ -496,15 +495,16 @@ def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) ->
     Run the Gazebo Sim command.
 
     Example:
-      gz sim -v4 -r iris_runway.sdf
+      gz sim -s -v 4 -r --headless-rendering iris_runway.sdf
     """
-
+    cmd = ["gz", "sim"]
+    if verbose:
+        cmd += ["-v", "4"]
     if headless:
-        # return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
-        return ["gz", "sim", verbose, "-s", "-r", world_sdf]
-    else:
-        return ["gz", "sim", verbose, "-r", world_sdf]
-    
+        cmd += ["-s"]
+    cmd += ["-r", world_sdf]
+    return cmd
+
 
 def _wait_gcs_connected(sitl_log: Path, timeout_s: float = 10.0) -> bool:
     t0 = time.time()
@@ -645,9 +645,10 @@ def run_once(
     gcs_log = logs_dir / "gcs.log"
 
     # find PX4 built binary and startup run commands
-    px4_bin = _find_px4_binary(px4_dir)
-    rc_script = _find_px4_rc_script(px4_dir)
-    px4_etc = _find_px4_etc(px4_dir)
+    # Deprecated because SITL is launched by make build everytime
+    # px4_bin = _find_px4_binary(px4_dir)
+    # rc_script = _find_px4_rc_script(px4_dir)
+    # px4_etc = _find_px4_etc(px4_dir)
 
     # Gazebo first
     # TODO: gazebo standalone mode and verbose logging with GZ_SIM_VERBOSE=4 and GZ_SIM_LOG_LEVEL=4 (debug)
@@ -677,7 +678,7 @@ def run_once(
                 f"{px4_worlds}:{existing}" if existing else str(px4_models)
             )
 
-        gz = _popen("gazebo", _run_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log, env=gz_env)
+        gz = _popen("gazebo", _run_gz_cmd(f"{world}.sdf", verbose="-v4" if verbose else "-v1", headless=False), cwd=logs_dir, log_path=gz_log, env=gz_env)
         current["gz"] = gz
 
     # QGroundControl second
@@ -713,6 +714,7 @@ def run_once(
         sim_engine, model = frame.split("_", 1)
         px4_env["PX4_SIMULATOR"] = sim_engine
         px4_env["PX4_GZ_MODEL"] = model
+        # px4_env["PX4_GZ_MODEL_NAME"] = f"{model}_{instance}"
         px4_env["PX4_GZ_WORLD"] = world
 
         if headless:
@@ -747,7 +749,7 @@ def run_once(
 
         px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
 
-        sitl = _popen("sitl", _run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir, log_path=sitl_log, env=px4_env)
+        sitl = _popen("sitl", _run_sitl_cmd(sim_engine=sim_engine, model=model), cwd=px4_dir, log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl
 
     if headless:
@@ -1044,8 +1046,10 @@ def main() -> int:
         print(f"[DEBUG] cfg.px4_dir={cfg.px4_dir}")
         cfg = _apply_cli_overrides(cfg, args)
 
-        # Confirm that PX4 is built: should delete and rebuild if headless/standalone options are changed to ensure correct build configuration
-        _ensure_px4_built(px4_dir=cfg.px4_dir, headless=args.headless)
+        # Confirm that PX4 is built
+        # Delete and rebuild if headless/standalone options are changed to ensure correct build configuration
+        # Deprecated because SITL is launched by make build everytime, which is more robust than trying to detect build config changes and manually cleaning up build artifacts
+        # _ensure_px4_built(px4_dir=cfg.px4_dir, headless=args.headless)
 
         # Print configuration info
         print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")

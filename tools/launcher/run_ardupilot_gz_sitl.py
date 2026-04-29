@@ -604,7 +604,10 @@ def run_once(
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for GCS to initialize...")
 
-        gcs = _popen("gcs", _run_mavproxy_cmd(gcs_outport, headless=headless), cwd=logs_dir, log_path=gcs_log)
+        gcs_env = os.environ.copy()
+        gcs_env["PATH"] = f"{Path.home() / '.local/bin'}:{gcs_env.get('PATH', '')}"
+
+        gcs = _popen("gcs", _run_mavproxy_cmd(gcs_outport, headless=headless), cwd=logs_dir, log_path=gcs_log, env=gcs_env)
         current["gcs"] = gcs
 
     # Ardupilot SITL third

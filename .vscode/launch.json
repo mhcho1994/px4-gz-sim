@@ -46,7 +46,7 @@
       "type": "python",
       "request": "launch",
       "python": "/usr/bin/python3",
-      "program": "${workspaceFolder}/tools/launcher/run_arducopter_gz_sitl.py",
+      "program": "${workspaceFolder}/tools/launcher/run_ardupilot_gz_sitl.py",
       "args": [
         "--run-root", "${workspaceFolder}/data/sitl_logs",
         "--startup-delay", "2",

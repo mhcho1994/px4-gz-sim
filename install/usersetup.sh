@@ -111,6 +111,17 @@ if [ -f "/opt/ros/${ROS_VERSION}/setup.bash" ]; then
   source "/opt/ros/${ROS_VERSION}/setup.bash"
 fi
 
+# --------------------------
+# Gazebo environment
+# If gz_env.sh exists, source it to set:
+#  - GZ_SIM_RESOURCE_PATH
+#  - ROS_GZ_RESOURCE_PATH
+# --------------------------
+GZ_ENV="${PROJECT_ROOT}/gz/env/gz_env.sh"
+if [ -f "\${GZ_ENV}" ]; then
+  source "\${GZ_ENV}"
+fi
+
 # Prefer Cyclone DDS for ROS 2 middleware (deterministic + commonly stable in containers)
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
@@ -139,11 +150,20 @@ if [ -f "${PX4_MSGS_ENV}/install/setup.bash" ]; then
 fi
 
 # --------------------------
+# PX4 Gazebo plugin environment
+# If px4_gz_env.sh exists, source it to set:
+#  - GZ_SIM_RESOURCE_PATH
+# --------------------------
+PX4_GZ_ENV="${PROJECT_ROOT}/gz/env/px4_gz_env.sh"
+if [ -f "\${PX4_GZ_ENV}" ]; then
+  source "\${PX4_GZ_ENV}"
+fi
+
+# --------------------------
 # ArduPilot Gazebo plugin environment (optional)
 # If ardupilot_gz_env.sh exists, source it to set:
-#  - ARDUPILOT_GZ_PLUGIN_PATH
 #  - GZ_SIM_SYSTEM_PLUGIN_PATH
-#  - LD_LIBRARY_PATH additions
+#  - GZ_SIM_RESOURCE_PATH
 # --------------------------
 ARDUPILOT_GZ_ENV="${PROJECT_ROOT}/gz/env/ardupilot_gz_env.sh"
 if [ -f "\${ARDUPILOT_GZ_ENV}" ]; then
