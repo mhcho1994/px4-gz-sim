@@ -451,6 +451,16 @@ class ArduPilotMissionRunner:
         print("[MISSION] Mission clear timeout")
         return False
 
+    def _drain_mavlink(self, m, duration: float = 1.0) -> None:
+        """
+        Drain stale MAVLink messages before starting a new transaction.
+        """
+        t0 = time.time()
+        while time.time() - t0 < duration:
+            msg = m.recv_match(blocking=False)
+            if msg is None:
+                time.sleep(0.02)
+
     def _upload_mission_items(self, m, items: list[dict], timeout: float = 30.0) -> bool:
         """
         Upload mission items using MAVLink mission protocol.
@@ -459,6 +469,8 @@ class ArduPilotMissionRunner:
             frame, command, autocontinue, p1..p7
         """
         self._set_status(MissionState.UPLOADING_MISSION, f"uploading {len(items)} items")
+
+        self._drain_mavlink(m, duration=0.5)
 
         m.mav.mission_count_send(
             m.target_system,
@@ -476,23 +488,24 @@ class ArduPilotMissionRunner:
                 req = m.recv_match(
                     type=["MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK", "STATUSTEXT"],
                     blocking=True,
-                    timeout=0.5,
+                    timeout=1.0,
                 )
 
-                if not req:
-                    raise RuntimeError("[MISSION] missionupload timeout")
+                if req is None:
+                    continue
 
-                if req.get_type() == "STATUSTEXT":
+                mtype = req.get_type()
+
+                # if not req:
+                #     raise RuntimeError("[MISSION] missionupload timeout")
+
+                if mtype == "STATUSTEXT":
                     print(f"[MISSION] AP: {req.text}")
                     continue
 
-                if req.get_type() == "MISSION_ACK":
-                    ack_type = req.type
-                    self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
-                    return ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED
-
-                if req.get_type() in ("MISSION_REQUEST", "MISSION_REQUEST_INT"):
+                if mtype in ("MISSION_REQUEST", "MISSION_REQUEST_INT"):
                     seq = req.seq
+
                     if seq < 0 or seq >= len(items):
                         print(f"[MISSION] Invalid mission request seq={seq}")
                         return False
@@ -516,6 +529,30 @@ class ArduPilotMissionRunner:
 
                     sent.add(seq)
                     print(f"[MISSION_UPLOAD] Sent mission item seq={seq}, cmd={it['command']}")
+                    continue
+
+                if mtype == "MISSION_ACK":
+                    # ack_type = req.type
+                    # self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
+                    # return ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED
+
+                    ack_type = req.type
+
+                    if ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED and len(sent) == len(items):
+                        print("[MISSION_UPLOAD] Mission accepted")
+                        self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
+                        return True
+
+                    print(
+                        f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
+                        f"type={ack_type}, sent={len(sent)}/{len(items)}"
+                    )
+
+                    if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                        return False
+
+                    # ACCEPTED가 너무 일찍 오면 stale ACK일 가능성이 있으므로 무시
+                    continue
 
         print("[MISSION_UPLOAD] Mission upload timeout")
         return False
@@ -1165,7 +1202,12 @@ class ArduPilotMissionRunner:
 
             # Clear and upload mission
             self._clear_mission(m)
-            self._upload_mission_items(m, items, timeout=10.0)
+            # self._upload_mission_items(m, items, timeout=10.0)
+            self._drain_mavlink(m, duration=0.5)
+
+            ok = self._upload_mission_items(m, items, timeout=30.0)
+            if not ok:
+                raise RuntimeError("Mission upload failed")
 
             # Switch to guided mode and arm
             self._set_status(MissionState.SETTING_GUIDED, "switching to GUIDED")
@@ -1199,6 +1241,9 @@ class ArduPilotMissionRunner:
             self._set_status(MissionState.AUTO, "switching to AUTO")
             self._set_mode(m, "AUTO")
             # self._set_mode_auto(m)
+
+            # if not self._set_mode_auto(m):
+            #     raise RuntimeError("Failed to switch to AUTO")
 
             # Monitor current mission
             self._monitor_current_mission(m, items, duration=300.0)
