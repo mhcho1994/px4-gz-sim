@@ -18,17 +18,17 @@ USE_EXEC=false
 
 # -----------------------------
 # Optional flags
-#   --rebuild : force container recreate
-#   --exec    : enter container with bash shell
+#   --recreate : force container recreate
+#   --exec     : enter container with bash shell
 # -----------------------------
 for arg in "$@"; do
     case "$arg" in
-        --rebuild) RECREATE=true ;;
+        --recreate) RECREATE=true ;;
         --exec)    USE_EXEC=true ;;
     esac
 done
 
-SERVICE="fire_flightstack_sim"
+SERVICE="FIRE_flightstack_simulator"
 
 # Setup sentinel used by entrypoint
 SETUP_DONE=".docker_home/.setup_done"
@@ -49,7 +49,7 @@ xhost +local:docker
 enter_container() {
     if $USE_EXEC; then
         echo "[INFO] Entering container via exec..."
-        docker compose exec "${SERVICE}" bash
+        docker compose exec -u user -it "${SERVICE}" bash
     else
         echo "[INFO] Attaching to container..."
         docker compose attach "${SERVICE}"
@@ -68,9 +68,13 @@ if $RECREATE; then
         rm -f "${SETUP_DONE}"
     fi
 
+    if docker compose ps -a --services --filter status=running \
+        | grep -q "^${SERVICE}$"; then
+        docker compose down
+    fi
+
     echo "[INFO] Recreating container..."
-    docker compose up --force-recreate -d
-    enter_container
+    docker compose up --force-recreate
 
 else
     if docker compose ps -a --services --filter status=running \
@@ -99,8 +103,12 @@ else
         # First run:
         # build image and create container
         # -----------------------------
+        if [[ -f "${SETUP_DONE}" ]]; then
+            echo "[INFO] Removing ${SETUP_DONE}"
+            rm -f "${SETUP_DONE}"
+        fi
+
         echo "[INFO] No container found. Building first time..."
-        docker compose up --build -d
-        enter_container
+        docker compose up
     fi
 fi
