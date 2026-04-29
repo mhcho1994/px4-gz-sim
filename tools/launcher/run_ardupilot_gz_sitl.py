@@ -416,6 +416,7 @@ def _run_sitl_cmd(vehicle: str, frame: str, model: str, instance: int, gcs_outpo
         f"--location={location}",
         f"--out=udp:127.0.0.1:{str(gcs_outport)}",
         f"--out={mavlink_url}",
+        "--no-mavproxy",
     ]
 
 
