@@ -49,6 +49,11 @@ mav.tlog
 mav.tlog.*
 
 # ================================
+# Docker Artifacts
+# ================================
+/.docker_home
+
+# ================================
 # Notes
 # ================================
 # - Large dependencies (PX4, ArduPilot, ROS2, Gazebo) should be managed via submodules or setup scripts

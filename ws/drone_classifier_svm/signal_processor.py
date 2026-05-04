@@ -297,6 +297,7 @@ def process_rosbag_flight_data(csv_path):
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
         return None, None, None, None, None, None
 
+<<<<<<< HEAD
 def process_real_flight_data(csv_path, measurement_type='mocap'):
     try:
         data = np.genfromtxt(csv_path, delimiter=',', names=True)
@@ -315,6 +316,14 @@ def process_real_flight_data(csv_path, measurement_type='mocap'):
         vx = np.gradient(x, t_loc)
         vy = np.gradient(y, t_loc)
         vz = np.gradient(z, t_loc)
+=======
+def process_camera_recovered_flight_data(csv_path):
+    try:
+        data = np.genfromtxt(csv_path, delimiter=',', names=True)
+        t_loc = data['timestamp']
+        x, y, z = data['xsmooth'], data['ysmooth'], data['zsmooth']
+        vx, vy, vz = np.gradient(x, t_loc), np.gradient(y, t_loc), np.gradient(z, t_loc)
+>>>>>>> 28490379759d12bae784bfe20b42082b6ed57314
 
         extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
         if extracted is None: return None, None, None, None, None, None
@@ -325,7 +334,11 @@ def process_real_flight_data(csv_path, measurement_type='mocap'):
         return x, y, t_full, feat_full, segments, spans
 
     except Exception as e:
+<<<<<<< HEAD
         print(f"[Real Flight Extract Error] {csv_path}: {e}")
+=======
+        print(f"[Camera Recovered Extract Error] {csv_path}: {e}")
+>>>>>>> 28490379759d12bae784bfe20b42082b6ed57314
         return None, None, None, None, None, None
 
 

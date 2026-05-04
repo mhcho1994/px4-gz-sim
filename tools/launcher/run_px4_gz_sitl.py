@@ -41,7 +41,7 @@ import re
 _THIS_FILE = Path(__file__).resolve()
 _TOOLS_DIR = _THIS_FILE.parents[1]
 _COMMANDER_DIR = _TOOLS_DIR / "commander"
-_QGC_DIR = _TOOLS_DIR / "QGC"
+_QGC_DIR = _TOOLS_DIR / "QGC" / "squashfs-root"
 _FAKE_GCS = _COMMANDER_DIR / "fake_gcs_heartbeat.py"
 
 if str(_COMMANDER_DIR) not in sys.path:
@@ -312,7 +312,7 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         pass
 
 
-def _ensure_px4_built(px4_dir: Path) -> Path:
+def _ensure_px4_built(px4_dir: Path, headless: bool) -> Path:
     """
     Ensure PX4 SITL binary exists. If not, build it.
 
@@ -323,6 +323,8 @@ def _ensure_px4_built(px4_dir: Path) -> Path:
 
     binary = px4_dir / "build" / "px4_sitl_default" / "bin" / "px4"
 
+    print(f"[DEBUG] Checking for existing PX4 binary at: {binary}")
+
     # already built
     if binary.exists():
         print(f"[INFO] PX4 already built: {binary}")
@@ -330,11 +332,18 @@ def _ensure_px4_built(px4_dir: Path) -> Path:
 
     print("[INFO] PX4 not built. Building SITL...")
 
+    # pass environmental variables for SITL instance
+    px4_build_env = os.environ.copy()
+
+    if headless:
+        px4_build_env["HEADLESS"] = "1"
+
     # PX4 build (default SITL target)
     subprocess.run(
         ["make", "px4_sitl"],
         cwd=px4_dir,
         check=True,
+        env=px4_build_env,
     )
 
     if not binary.exists():
@@ -412,10 +421,9 @@ def _find_px4_etc(px4_dir: Path) -> Path:
     )
 
 
-def _run_sitl_cmd(px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]:
-    cmd = [
-        str(px4_bin),
-    ]  
+def _run_sitl_cmd(sim_engine: str = 'gz', model: str = 'x500') -> list[str]:
+    # (px4_bin: Path, px4_etc: Path, logs_dir: Path) -> list[str]
+    cmd = ["make", "px4_sitl", f"{sim_engine}_{model}"]
     return cmd
 
 
@@ -455,7 +463,7 @@ def _run_qgc_cmd(out_port: int) -> list[str]:
     Launch QGroundControl (GCS).
     QGC automatically listens on UDP port 14550.
     """
-    qgc_bin = _QGC_DIR / "QGroundControl-x86_64.AppImage"
+    qgc_bin = _QGC_DIR / "AppRun"
     return [str(qgc_bin)]
 
 
@@ -487,14 +495,16 @@ def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) ->
     Run the Gazebo Sim command.
 
     Example:
-      gz sim -v4 -r iris_runway.sdf
+      gz sim -s -v 4 -r --headless-rendering iris_runway.sdf
     """
-
+    cmd = ["gz", "sim"]
+    if verbose:
+        cmd += ["-v", "4"]
     if headless:
-        return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
-    else:
-        return ["gz", "sim", verbose, "-r", world_sdf]
-    
+        cmd += ["-s"]
+    cmd += ["-r", world_sdf]
+    return cmd
+
 
 def _wait_gcs_connected(sitl_log: Path, timeout_s: float = 10.0) -> bool:
     t0 = time.time()
@@ -635,9 +645,10 @@ def run_once(
     gcs_log = logs_dir / "gcs.log"
 
     # find PX4 built binary and startup run commands
-    px4_bin = _find_px4_binary(px4_dir)
-    rc_script = _find_px4_rc_script(px4_dir)
-    px4_etc = _find_px4_etc(px4_dir)
+    # Deprecated because SITL is launched by make build everytime
+    # px4_bin = _find_px4_binary(px4_dir)
+    # rc_script = _find_px4_rc_script(px4_dir)
+    # px4_etc = _find_px4_etc(px4_dir)
 
     # Gazebo first
     # TODO: gazebo standalone mode and verbose logging with GZ_SIM_VERBOSE=4 and GZ_SIM_LOG_LEVEL=4 (debug)
@@ -667,7 +678,7 @@ def run_once(
                 f"{px4_worlds}:{existing}" if existing else str(px4_models)
             )
 
-        gz = _popen("gazebo", _run_gz_cmd(f"{world}.sdf", "-v4"), cwd=logs_dir, log_path=gz_log, env=gz_env)
+        gz = _popen("gazebo", _run_gz_cmd(f"{world}.sdf", verbose="-v4" if verbose else "-v1", headless=False), cwd=logs_dir, log_path=gz_log, env=gz_env)
         current["gz"] = gz
 
     # QGroundControl second
@@ -683,7 +694,7 @@ def run_once(
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for fake GCS to initialize...")
 
         fGCS = _popen("gcs_fake", 
-                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=5.0), 
+                      _run_fake_gcs_cmd(connect_url=f"udp:127.0.0.1:{gcs_outport}", rate_hz=10.0), 
                       cwd=logs_dir, log_path=gcs_log)
         current["gcs"] = fGCS
 
@@ -703,6 +714,7 @@ def run_once(
         sim_engine, model = frame.split("_", 1)
         px4_env["PX4_SIMULATOR"] = sim_engine
         px4_env["PX4_GZ_MODEL"] = model
+        # px4_env["PX4_GZ_MODEL_NAME"] = f"{model}_{instance}"
         px4_env["PX4_GZ_WORLD"] = world
 
         if headless:
@@ -737,11 +749,11 @@ def run_once(
 
         px4_env["GZ_SIM_RESOURCE_PATH"] = ":".join(new_paths)
 
-        sitl = _popen("sitl", _run_sitl_cmd(px4_bin, px4_etc, logs_dir), cwd=logs_dir, log_path=sitl_log, env=px4_env)
+        sitl = _popen("sitl", _run_sitl_cmd(sim_engine=sim_engine, model=model), cwd=px4_dir, log_path=sitl_log, env=px4_env)
         current["sitl"] = sitl
 
     if headless:
-        ok = _wait_gcs_connected(sitl_log, timeout_s=30.0)
+        ok = _wait_gcs_connected(sitl_log, timeout_s=60.0)
         if not ok:
             print("[WARN] fake GCS connection was not established in time")
 
@@ -1031,10 +1043,13 @@ def main() -> int:
         scenario_path = run_dir / "scenario.yaml"
 
         # Set other configurations and overrides if headless mode is enabled
+        print(f"[DEBUG] cfg.px4_dir={cfg.px4_dir}")
         cfg = _apply_cli_overrides(cfg, args)
 
         # Confirm that PX4 is built
-        _ensure_px4_built(px4_dir=cfg.px4_dir)
+        # Delete and rebuild if headless/standalone options are changed to ensure correct build configuration
+        # Deprecated because SITL is launched by make build everytime, which is more robust than trying to detect build config changes and manually cleaning up build artifacts
+        # _ensure_px4_built(px4_dir=cfg.px4_dir, headless=args.headless)
 
         # Print configuration info
         print(f"\n---- {run_dir.name}: RUN {cfg.scenario_name} Scenario ----")

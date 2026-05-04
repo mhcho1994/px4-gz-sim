@@ -316,6 +316,45 @@ def _finalize_proc(ph: Optional[ProcHandle], grace_s: float = 5.0) -> None:
         pass
 
 
+def _ensure_waf_ready(ap_dir: Path) -> None:
+    """Ensure ArduPilot waf submodule/bootstrap is present."""
+    waf = ap_dir / "modules" / "waf"
+    waf_light = ap_dir / "modules" / "waf" / "waf-light"
+
+    if waf.exists() and waf_light.exists():
+        return
+
+    print("[INFO] Missing waf or waf-light. Initializing submodules...")
+    subprocess.run(["git", "submodule", "update", "--init", "--recursive"], cwd=ap_dir)
+
+    if not waf.exists() or not waf_light.exists():
+        raise RuntimeError(
+            "waf bootstrap failed: './waf' or 'modules/waf/waf-light' still missing."
+        )
+
+
+def _configure_ardupilot(ap_dir: Path) -> None:
+    """
+    Run waf configure robustly.
+
+    ArduPilot may fetch waf submodule on the first call and ask to run again,
+    so we allow one retry.
+    """
+    _ensure_waf_ready(ap_dir)
+
+    for attempt in (1, 2):
+        try:
+            print(f"[INFO] Configuring ArduPilot SITL (attempt {attempt})...")
+            subprocess.run(["./waf", "configure", "--board", "sitl"], cwd=ap_dir, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == 1:
+                print("[WARN] Initial configure failed. Retrying after submodule/bootstrap check...")
+                _ensure_waf_ready(ap_dir)
+                continue
+            raise RuntimeError("ArduPilot waf configure failed after retry.") from e
+
+
 def _ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
     """
     Ensure ArduPilot SITL binary exists. If not, build it.
@@ -343,24 +382,17 @@ def _ensure_ardupilot_built(ap_dir: Path, vehicle: str = "copter") -> Path:
 
     print("[INFO] ArduPilot not built. Building SITL...")
 
-    # configure (safe to re-run)
-    subprocess.run(
-        ["./waf", "configure", "--board", "sitl"],
-        cwd=ap_dir,
-        check=True,
-    )
+    # Important: configure may need a retry after waf submodule bootstrap
+    _configure_ardupilot(ap_dir)
 
-    # build
-    subprocess.run(
-        ["./waf", vehicle],
-        cwd=ap_dir,
-        check=True,
-    )
+    print(f"[INFO] Building ArduPilot target: {vehicle}")
+    subprocess.run(["./waf", vehicle], cwd=ap_dir)
 
     if not binary.exists():
-        raise RuntimeError("Build finished but binary not found.")
+        raise RuntimeError(f"Build finished but binary not found: {binary}")
 
     print(f"[INFO] Build complete: {binary}")
+
     return binary
 
 
@@ -415,10 +447,10 @@ def _run_gz_cmd(world_sdf: str, verbose: str = "-v4", headless: bool = False) ->
     Run the Gazebo Sim command.
 
     Example:
-      gz sim -v4 -r iris_runway.sdf
+      gz sim -v4 -r iris_runway.sdf "--headless-rendering"
     """
     if headless:
-        return ["gz", "sim", verbose, "-s", "-r", "--headless-rendering", world_sdf]
+        return ["gz", "sim", verbose, "-s", "-r", world_sdf]
     else:
         return ["gz", "sim", verbose, "-r", world_sdf]
 
@@ -568,11 +600,14 @@ def run_once(
         current["gz"] = gz
 
     # GCS (MAVProxy Console and Map) second
-    if current.get("gcs") is None:
+    if (not headless) and current.get("gcs") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for GCS to initialize...")
 
-        gcs = _popen("gcs", _run_mavproxy_cmd(gcs_outport, headless=headless), cwd=logs_dir, log_path=gcs_log)
+        gcs_env = os.environ.copy()
+        gcs_env["PATH"] = f"{Path.home() / '.local/bin'}:{gcs_env.get('PATH', '')}"
+
+        gcs = _popen("gcs", _run_mavproxy_cmd(gcs_outport, headless=headless), cwd=logs_dir, log_path=gcs_log, env=gcs_env)
         current["gcs"] = gcs
 
     # Ardupilot SITL third

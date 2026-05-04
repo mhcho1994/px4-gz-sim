@@ -6,13 +6,19 @@ set -euo pipefail
 # Build (and optionally run) the Docker image for FIRE_flightstack_sim.
 #
 # Main roles:
+#   - optionally run host-side fetch steps before docker build
 #   - build Docker image with host UID/GID mapping
 #   - optionally run container with bind mounts
 #   - optionally enable GPU and X11 forwarding
 #
-# Example:
+# Recommended workflow:
+#   1) host fetch  : external artifacts / helper repos
+#   2) docker build: dependency/toolchain image
+#   3) container run: runtime env/usersetup and optional manual build
+#
+# Examples:
 #   ./setup_docker.sh
-#   ./setup_docker.sh --tag dev
+#   ./setup_docker.sh --fetch-only
 #   ./setup_docker.sh --run
 #   ./setup_docker.sh --run --gpu --x11 --mount-src
 # -----------------------------------------------------------------------------
@@ -31,11 +37,12 @@ IMAGE_NAME="${IMAGE_NAME:-fire_flightstack_sim}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-fire_flightstack_sim}"
 
+DO_FETCH=1
 DO_BUILD=1
 DO_RUN=0
 USE_GPU=0
 USE_X11=0
-MOUNT_SRC=0
+MOUNT_SRC=1
 USE_HOST_NET=1
 REMOVE_ON_EXIT=0
 DEBUG=0
@@ -57,20 +64,25 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Build and optionally run the Docker image for FIRE_flightstack_sim.
+Host fetch, build, and optionally run the Docker image for FIRE_flightstack_sim.
 
 Options:
   --image NAME           Docker image name (default: ${IMAGE_NAME})
   --tag TAG              Docker image tag (default: ${IMAGE_TAG})
   --container NAME       Container name (default: ${CONTAINER_NAME})
 
-  --build-only           Build image only (default behavior)
-  --run                  Build and run container
-  --no-build             Skip build step, only run container
+  --fetch                Run host-side fetch step before docker build (default: on)
+  --no-fetch             Skip host-side fetch step
+  --fetch-only           Run host-side fetch only, then exit
+
+  --build-only           Run fetch + build only (default behavior)
+  --run                  Run container after fetch/build
+  --no-build             Skip docker build step
 
   --gpu                  Enable NVIDIA GPU support at runtime
   --x11                  Enable X11 forwarding for GUI apps
-  --mount-src            Bind-mount project source into container workspace
+  --mount-src            Bind-mount full project source tree into container
+  --no-mount-src         Do not bind-mount the full project source tree
 
   --no-host-net          Do not use host networking
   --rm                   Remove container automatically on exit
@@ -80,9 +92,10 @@ Options:
 
 Examples:
   $(basename "$0")
+  $(basename "$0") --fetch-only
   $(basename "$0") --tag dev
   $(basename "$0") --run
-  $(basename "$0") --run --gpu --x11 --mount-src
+  $(basename "$0") --run --gpu --x11
 EOF
 }
 
@@ -104,33 +117,44 @@ ensure_dir() {
     fi
 }
 
-run_script() {
+prepare_script() {
     local script_path="$1"
-    shift
     require_file "$script_path"
 
-    log "Preparing script: $script_path"
-    sudo chown "$CURRENT_USER:$CURRENT_USER" "$script_path"
-    sudo chmod +x "$script_path"
-
-    log "Running script: $script_path $*"
-    bash "$script_path" "$@"
+    chmod +x "$script_path" || true
 }
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --image)
+                [[ $# -ge 2 ]] || die "--image requires a value"
                 IMAGE_NAME="$2"
                 shift 2
                 ;;
             --tag)
+                [[ $# -ge 2 ]] || die "--tag requires a value"
                 IMAGE_TAG="$2"
                 shift 2
                 ;;
             --container)
+                [[ $# -ge 2 ]] || die "--container requires a value"
                 CONTAINER_NAME="$2"
                 shift 2
+                ;;
+            --fetch)
+                DO_FETCH=1
+                shift
+                ;;
+            --no-fetch)
+                DO_FETCH=0
+                shift
+                ;;
+            --fetch-only)
+                DO_FETCH=1
+                DO_BUILD=0
+                DO_RUN=0
+                shift
                 ;;
             --build-only)
                 DO_BUILD=1
@@ -155,6 +179,10 @@ parse_args() {
                 ;;
             --mount-src)
                 MOUNT_SRC=1
+                shift
+                ;;
+            --no-mount-src)
+                MOUNT_SRC=0
                 shift
                 ;;
             --no-host-net)
@@ -182,32 +210,52 @@ parse_args() {
 
 check_prereqs() {
     require_cmd docker
+    require_cmd bash
     require_file "$PROJECT_ROOT/Dockerfile"
+
     require_file "$PROJECT_ROOT/install/base.sh"
     require_file "$PROJECT_ROOT/install/ros2.sh"
     require_file "$PROJECT_ROOT/install/gazebo.sh"
     require_file "$PROJECT_ROOT/install/autopilot.sh"
     require_file "$PROJECT_ROOT/install/extra.sh"
     require_file "$PROJECT_ROOT/install/entrypoint.sh"
+    require_file "$PROJECT_ROOT/install/usersetup.sh"
 
     if [[ ! -f "$PROJECT_ROOT/install/clean.sh" ]]; then
-        warn "install/clean.sh not found. Your Dockerfile currently runs /tmp/clean.sh."
-        warn "You may want to add: COPY install/clean.sh /tmp/clean.sh"
+        warn "install/clean.sh not found. Make sure Dockerfile does not require it."
     fi
+
+    prepare_script "$PROJECT_ROOT/install/autopilot.sh"
+    prepare_script "$PROJECT_ROOT/install/extra.sh"
+    prepare_script "$PROJECT_ROOT/install/entrypoint.sh"
+    prepare_script "$PROJECT_ROOT/install/usersetup.sh"
 }
 
 prepare_host_dirs() {
     log "Preparing host directories under project root"
 
-    run_script "$PROJECT_ROOT/install/gazebo.sh" --install binary ??
-
     ensure_dir "$PROJECT_ROOT/ap"
     ensure_dir "$PROJECT_ROOT/data"
     ensure_dir "$PROJECT_ROOT/gz"
     ensure_dir "$PROJECT_ROOT/ros2"
-    ensure_dir "$PROJECT_ROOT/ap"
+    ensure_dir "$PROJECT_ROOT/tools"
     ensure_dir "$PROJECT_ROOT/ws"
     ensure_dir "$PROJECT_ROOT/.docker_home"
+}
+
+run_host_fetch() {
+    log "Running host-side fetch steps"
+
+    bash "$PROJECT_ROOT/install/autopilot.sh" \
+        --phase fetch \
+        --with-ardupilot \
+        --project-root "$PROJECT_ROOT"
+
+    bash "$PROJECT_ROOT/install/extra.sh" \
+        --phase fetch \
+        --project-root "$PROJECT_ROOT"
+
+    log "Host-side fetch completed"
 }
 
 build_image() {
@@ -223,6 +271,10 @@ build_image() {
         --build-arg GID_USER="${HOST_GID}" \
         --build-arg GID_INPUT="${GID_INPUT}" \
         --build-arg GID_RENDER="${GID_RENDER}" \
+        --build-arg HOST_USER_NAME="${CURRENT_USER}" \
+        --build-arg HOST_USER_ID="${HOST_UID}" \
+        --build-arg HOST_GROUP_NAME="${CURRENT_USER}" \
+        --build-arg HOST_GROUP_ID="${HOST_GID}" \
         -t "${image_ref}" \
         -f "${PROJECT_ROOT}/Dockerfile" \
         "${PROJECT_ROOT}"
@@ -250,6 +302,11 @@ build_run_cmd() {
         cmd+=(-e NVIDIA_VISIBLE_DEVICES=all)
         cmd+=(-e NVIDIA_DRIVER_CAPABILITIES=all)
     fi
+
+    cmd+=(-e HOST_UID="${HOST_UID}")
+    cmd+=(-e HOST_GID="${HOST_GID}")
+    cmd+=(-e HOST_USER_NAME="${CURRENT_USER}")
+    cmd+=(-e HOST_GROUP_NAME="${CURRENT_USER}")
 
     cmd+=(-e TZ=America/New_York)
     cmd+=(-e XDG_RUNTIME_DIR=/tmp/runtime-docker)
@@ -279,15 +336,16 @@ build_run_cmd() {
         fi
     fi
 
-    # Persistent home-ish area inside project root if needed later
+    # Persistent user-home-like area if needed later
     cmd+=(-v "${PROJECT_ROOT}/.docker_home:/home/user/.host_persist")
 
-    # Common working data mounts
-    [[ -d "${PROJECT_ROOT}/data" ]] && cmd+=(-v "${PROJECT_ROOT}/data:/home/user/FIRE_flightstack_sim/data")
-    [[ -d "${PROJECT_ROOT}/ws"   ]] && cmd+=(-v "${PROJECT_ROOT}/ws:/home/user/FIRE_flightstack_sim/ws")
-    [[ -d "${PROJECT_ROOT}/ros2" ]] && cmd+=(-v "${PROJECT_ROOT}/ros2:/home/user/FIRE_flightstack_sim/ros2")
-    [[ -d "${PROJECT_ROOT}/gz"   ]] && cmd+=(-v "${PROJECT_ROOT}/gz:/home/user/FIRE_flightstack_sim/gz")
-    [[ -d "${PROJECT_ROOT}/ap"   ]] && cmd+=(-v "${PROJECT_ROOT}/ap:/home/user/FIRE_flightstack_sim/ap")
+    # Common data mounts
+    [[ -d "${PROJECT_ROOT}/data"  ]] && cmd+=(-v "${PROJECT_ROOT}/data:/home/user/FIRE_flightstack_sim/data")
+    [[ -d "${PROJECT_ROOT}/ws"    ]] && cmd+=(-v "${PROJECT_ROOT}/ws:/home/user/FIRE_flightstack_sim/ws")
+    [[ -d "${PROJECT_ROOT}/ros2"  ]] && cmd+=(-v "${PROJECT_ROOT}/ros2:/home/user/FIRE_flightstack_sim/ros2")
+    [[ -d "${PROJECT_ROOT}/gz"    ]] && cmd+=(-v "${PROJECT_ROOT}/gz:/home/user/FIRE_flightstack_sim/gz")
+    [[ -d "${PROJECT_ROOT}/ap"    ]] && cmd+=(-v "${PROJECT_ROOT}/ap:/home/user/FIRE_flightstack_sim/ap")
+    [[ -d "${PROJECT_ROOT}/tools" ]] && cmd+=(-v "${PROJECT_ROOT}/tools:/home/user/FIRE_flightstack_sim/tools")
 
     # Optionally mount the whole source tree
     if [[ "${MOUNT_SRC}" -eq 1 ]]; then
@@ -295,7 +353,11 @@ build_run_cmd() {
     fi
 
     cmd+=(-w /home/user/FIRE_flightstack_sim)
+
+    # entrypoint supports optional chown targets
     cmd+=("${image_ref}")
+    cmd+=(--chown /home/user/FIRE_flightstack_sim)
+    cmd+=(-- bash)
 
     printf '%q ' "${cmd[@]}"
     echo
@@ -324,6 +386,21 @@ run_container() {
     eval "${run_cmd}"
 }
 
+print_summary() {
+    log "Configuration summary:"
+    log "  PROJECT_ROOT   = ${PROJECT_ROOT}"
+    log "  IMAGE          = ${IMAGE_NAME}:${IMAGE_TAG}"
+    log "  CONTAINER      = ${CONTAINER_NAME}"
+    log "  DO_FETCH       = ${DO_FETCH}"
+    log "  DO_BUILD       = ${DO_BUILD}"
+    log "  DO_RUN         = ${DO_RUN}"
+    log "  MOUNT_SRC      = ${MOUNT_SRC}"
+    log "  USE_GPU        = ${USE_GPU}"
+    log "  USE_X11        = ${USE_X11}"
+    log "  USE_HOST_NET   = ${USE_HOST_NET}"
+    log "  REMOVE_ON_EXIT = ${REMOVE_ON_EXIT}"
+}
+
 main() {
     parse_args "$@"
 
@@ -332,8 +409,16 @@ main() {
     fi
 
     log "Starting Docker setup from: ${PROJECT_ROOT}"
+
     check_prereqs
     prepare_host_dirs
+    print_summary
+
+    if [[ "${DO_FETCH}" -eq 1 ]]; then
+        run_host_fetch
+    else
+        log "Skipping host fetch step"
+    fi
 
     if [[ "${DO_BUILD}" -eq 1 ]]; then
         build_image
@@ -345,7 +430,9 @@ main() {
         run_container
     else
         log "Docker setup completed successfully."
-        log "Image ready: ${IMAGE_NAME}:${IMAGE_TAG}"
+        if [[ "${DO_BUILD}" -eq 1 ]]; then
+            log "Image ready: ${IMAGE_NAME}:${IMAGE_TAG}"
+        fi
     fi
 }
 

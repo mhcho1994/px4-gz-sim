@@ -1,12 +1,9 @@
 # Base format file for running auto generation script (Do not modify)
-version: "3.9"
-
 services:
   # FIRE flightstack simulator
   FIRE_flightstack_simulator:
-    container_name: flightstack_sim
-    hostname: flightstack_sim
-    image: flightstack_sim:latest
+    container_name: fire_flightstack_sim
+    image: fire_flightstack_sim:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,6 +26,7 @@ services:
     privileged: true
     tty: true
     stdin_open: true
+    shm_size: "4gb"
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
       - ./:/home/user/FIRE_flightstack_sim:rw
