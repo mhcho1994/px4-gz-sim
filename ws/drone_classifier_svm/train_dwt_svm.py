@@ -9,6 +9,7 @@ from sklearn.metrics import classification_report, accuracy_score, confusion_mat
 from sklearn.decomposition import PCA
 from scipy.stats import kurtosis
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import matplotlib
 
 # WSL 환경 등 디스플레이가 없는 경우를 위한 백엔드 설정
@@ -50,15 +51,15 @@ def extract_dwt_features(timeseries_matrix, waveletname='db4', level=3):
     return np.array(flight_features)
 
 # =====================================================================
-# 4. 시각화 함수 (자동 폴더 생성 및 Real Data 시각화 포함)
+# 4. Visualization Function
 # =====================================================================
 def plot_classification_results(X_train_scaled, X_test_scaled, y_train, y_test, y_pred, target_names, X_real_scaled=None, y_real=None, y_real_pred=None):
     save_dir = "data/figure"
     os.makedirs(save_dir, exist_ok=True)
 
-    # 1. Confusion Matrix 플롯
-    # cm = confusion_matrix(y_test, y_pred)
-    # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=target_names)
+    # 1. Plot Confusion Matrix (Uncommented to fix NameError)
+    cm = confusion_matrix(y_test, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=target_names)
     
     fig, ax = plt.subplots(figsize=(6, 5))
     disp.plot(cmap=plt.cm.Blues, ax=ax)
@@ -68,28 +69,27 @@ def plot_classification_results(X_train_scaled, X_test_scaled, y_train, y_test, 
     plt.close()
     print(f"[Info] Saved Confusion Matrix plot to '{save_dir}/svm_confusion_matrix.png'")
 
-    # 2. PCA 2D Scatter 플롯 (48차원 -> 2차원 축소)
+    # 2. PCA 2D Scatter Plot (Reduce 48 dimensions to 2)
     pca = PCA(n_components=2)
     X_train_pca = pca.fit_transform(X_train_scaled)
     X_test_pca = pca.transform(X_test_scaled)
 
     fig, ax = plt.subplots(figsize=(8, 6))
     
-    # [수정됨] SITL Train 데이터 (동그라미)
+    # Plot SITL Train Data (Circles)
     scatter_train = ax.scatter(X_train_pca[:, 0], X_train_pca[:, 1], c=y_train, 
                                cmap='coolwarm', alpha=0.3, marker='o', label='Train Data (SITL)')
     
-    # [수정됨] SITL Test 데이터 (원래대로 동그라미 'o'로 복구)
+    # Plot SITL Test Data (Circles with thick edges)
     scatter_test = ax.scatter(X_test_pca[:, 0], X_test_pca[:, 1], c=y_test, 
                               cmap='coolwarm', alpha=1.0, marker='o', s=100, edgecolor='k', label='Test Data (SITL)')
 
-    from matplotlib.lines import Line2D
     custom_lines = [
         Line2D([0], [0], marker='o', color='w', markerfacecolor=scatter_train.cmap(0.0), markersize=10, label=f"SITL: {target_names[0]}"),
         Line2D([0], [0], marker='o', color='w', markerfacecolor=scatter_train.cmap(1.0), markersize=10, label=f"SITL: {target_names[1]}")
     ]
 
-    # Real Flight Data 시각화 (정답/오답 구분 표시)
+    # Visualize Real Flight Data (Mark correct/incorrect predictions)
     if X_real_scaled is not None and len(X_real_scaled) > 0 and y_real is not None and y_real_pred is not None:
         X_real_pca = pca.transform(X_real_scaled)
         
@@ -121,26 +121,38 @@ def plot_classification_results(X_train_scaled, X_test_scaled, y_train, y_test, 
 
 
 def main():
-    # --- 단계 1: SITL 데이터 로드 및 학습 ---
-    
-    # 1. Load SITL Data (SITL uses 'raw' paths by default)
-    X_px4_sitl, y_px4_sitl = load_px4_dataset("sitl_logs")
-    X_ardu_sitl, y_ardu_sitl = load_ardu_dataset("sitl_logs", data_type='raw')
-    
-    X_sitl_ts = X_px4_sitl + X_ardu_sitl
-    y_sitl = np.concatenate((y_px4_sitl, y_ardu_sitl))
+    cache_dir = Path("ws/drone_classifier_svm/cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if len(X_sitl_ts) < 5:
-        print("\n[Error] Not enough SITL data to train the model. Check SITL log paths.")
-        return 
+    # 1. Load SITL Data and Extract DWT Features (with caching)
+    sitl_cache_file = cache_dir / "sitl_dwt_cache.npz"
+    if sitl_cache_file.exists():
+        print(f"\n[Info] Loading cached SITL DWT features from '{sitl_cache_file}'...")
+        cache = np.load(sitl_cache_file)
+        X_sitl_dwt = cache['X']
+        y_sitl = cache['y']
+        print(f"[Success] SITL DWT Feature Matrix Shape: {X_sitl_dwt.shape}")
+    else:
+        # 1. Load SITL Data (SITL uses 'raw' paths by default)
+        X_px4_sitl, y_px4_sitl = load_px4_dataset("sitl_logs")
+        X_ardu_sitl, y_ardu_sitl = load_ardu_dataset("sitl_logs", data_type='raw')
         
-    print(f"\n[Success] Loaded {len(X_sitl_ts)} SITL flight data segments.")
-    print("[Info] Extracting DWT features for SITL data...")
-    
-    # 1-1. SITL 데이터 특징 추출 (DWT)
-    X_sitl_dwt = np.array([extract_dwt_features(ts, waveletname='db4', level=3) for ts in X_sitl_ts])
-    print(f"[Success] SITL DWT Feature Matrix Shape: {X_sitl_dwt.shape}")
-    
+        X_sitl_ts = X_px4_sitl + X_ardu_sitl
+        y_sitl = np.concatenate((y_px4_sitl, y_ardu_sitl))
+
+        if len(X_sitl_ts) < 5:
+            print("\n[Error] Not enough SITL data to train the model.")
+            return 
+            
+        print(f"\n[Success] Loaded {len(X_sitl_ts)} SITL flight data segments.")
+        print("[Info] Extracting DWT features for SITL data (This may take a while)...")
+        
+        X_sitl_dwt = np.array([extract_dwt_features(ts, waveletname='db4', level=3) for ts in X_sitl_ts])
+        
+        np.savez(sitl_cache_file, X=X_sitl_dwt, y=y_sitl)
+        print(f"[Info] Saved extracted SITL features to cache.")
+        print(f"[Success] SITL DWT Feature Matrix Shape: {X_sitl_dwt.shape}")
+
     # 1-2. Train / Test 데이터 분할
     X_train, X_test, y_train, y_test = train_test_split(X_sitl_dwt, y_sitl, test_size=0.1, random_state=42)
     
@@ -168,31 +180,31 @@ def main():
     print("  REAL FLIGHT DATA LOADING")
     print("="*30)
     
-    test_folders = ["260501_flight_logs"]
+    test_folders = ["260424_flight_logs"]
     X_real_ts = []
     y_real = []
 
     for folder in test_folders:
         print(f"\n[Processing Folder] {folder}")
         
-        # 0. Load PX4 real data (labeled as Class 0)  <-- 이 부분을 새로 추가합니다!
+        # 0. Load PX4 real data (labeled as Class 0)
         X_px4_real, y_px4_real = load_px4_dataset(folder, data_type='processed', measurement_type='vision')
+        print(f"  --> PX4 Subtotal for {folder}: {len(X_px4_real)} segments.")
         if len(X_px4_real) > 0:
-            print(f"  --> PX4 Subtotal for {folder}: {len(X_px4_real)} segments.")
             X_real_ts.extend(X_px4_real)
             y_real.extend(y_px4_real)
             
         # 1. Load ArduPilot real data (labeled as Class 1)
         X_ardu_real, y_ardu_real = load_ardu_dataset(folder, data_type='processed', measurement_type='vision')
+        print(f"  --> ArduPilot Subtotal for {folder}: {len(X_ardu_real)} segments.")
         if len(X_ardu_real) > 0:
-            print(f"  --> ArduPilot Subtotal for {folder}: {len(X_ardu_real)} segments.")
             X_real_ts.extend(X_ardu_real)
             y_real.extend(y_ardu_real)
             
         # 2. Load Cogni real data (labeled as Class 2)
         X_cogni_real, y_cogni_real = load_cogni_dataset(folder, data_type='processed', measurement_type='vision')
+        print(f"  --> Cogni Subtotal for {folder}: {len(X_cogni_real)} segments.")
         if len(X_cogni_real) > 0:
-            print(f"  --> Cogni Subtotal for {folder}: {len(X_cogni_real)} segments.")
             X_real_ts.extend(X_cogni_real)
             y_real.extend(y_cogni_real)
 
@@ -208,11 +220,26 @@ def main():
     y_real_pred = None
 
     if len(X_real_ts) > 0:
-        # Feature extraction for real flight segments
+        # Extract DWT features for real flight segments
         X_real_dwt = np.array([extract_dwt_features(ts, waveletname='db4', level=3) for ts in X_real_ts])
-        X_real_scaled = scaler.transform(X_real_dwt)
         
-        # Prediction
+        # Filter out any rows containing NaN values before scaling and prediction
+        valid_indices = ~np.isnan(X_real_dwt).any(axis=1)
+        removed_count = len(X_real_dwt) - np.sum(valid_indices)
+        
+        if removed_count > 0:
+            print(f"\n[Warning] Removed {removed_count} corrupted segments containing NaN values.")
+            
+        # Keep only valid data without NaNs
+        X_real_dwt = X_real_dwt[valid_indices]
+        y_real = np.array(y_real)[valid_indices]
+        
+        if len(X_real_dwt) == 0:
+            print("[Error] No valid real flight data left after removing NaNs.")
+            return
+
+        # Scale features and perform prediction
+        X_real_scaled = scaler.transform(X_real_dwt)
         y_real_pred = model.predict(X_real_scaled)
         
         correct_count = np.sum(y_real_pred == np.array(y_real))
@@ -228,7 +255,7 @@ def main():
         for i in range(len(y_real)):
             true_name = label_map.get(y_real[i], "Unknown")
             pred_name = label_map.get(y_real_pred[i], "Unknown")
-            status = "✅ Match" if true_name == pred_name else "❌ Fail"
+            status = "Match" if true_name == pred_name else "Fail"
             print(f"{i+1:<4} | {true_name:<12} | {pred_name:<12} | {status}")
         print("-" * 65)
         

@@ -397,15 +397,24 @@ def plot_turn_segment_features(t, features, title, save_path, line_color):
     plt.close(fig)
 
 
-if __name__ == "__main__":
+def main():
     BASE_DATA_DIR = Path("data") 
     print("[Info] Starting Combined Pipeline: XY / Full Highlights / Segments...\n")
 
-    for i in range(100):
-        run_folder = f"run_{i:03d}"
-        run_dir = BASE_DATA_DIR / run_folder
-        if not run_dir.exists(): continue
+    if not BASE_DATA_DIR.exists():
+        print(f"[Error] Data directory not found: {BASE_DATA_DIR}")
+        return
 
+    run_folders = sorted([f for f in os.listdir(BASE_DATA_DIR) 
+                         if f.startswith("run_")  and (BASE_DATA_DIR / f).is_dir()])
+
+    if not run_folders:
+        print(f"[Warning] No run folders found in {BASE_DATA_DIR}")
+        return
+
+    for run_folder in run_folders:
+        run_dir = BASE_DATA_DIR / run_folder
+        
         px4_dir = run_dir / "px4_logs" / "raw"
         ardu_dir = run_dir / "ardu_logs" / "raw" / "logs"
         
@@ -471,3 +480,7 @@ if __name__ == "__main__":
                 )
 
     print("\n[Info] All combined XY and segmentation plots generated successfully!")
+
+
+if __name__ == "__main__":
+    main()
