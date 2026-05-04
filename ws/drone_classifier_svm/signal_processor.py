@@ -1,5 +1,6 @@
 from pathlib import Path
 import numpy as np
+import pandas as pd
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from pyulog import ULog
@@ -295,6 +296,38 @@ def process_rosbag_flight_data(csv_path):
     except Exception as e:
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
         return None, None, None, None, None, None
+
+def process_real_flight_data(csv_path, measurement_type='mocap'):
+    try:
+        data = np.genfromtxt(csv_path, delimiter=',', names=True)
+        t_loc = data['timestamp']
+
+        # Select target columns based on measurement_type
+        if measurement_type == 'mocap':
+            x, y, z = data['gtx'], data['gty'], data['gtz']
+        elif measurement_type == 'vision':
+            x, y, z = data['xsmooth'], data['ysmooth'], data['zsmooth']
+        else:
+            print(f"[Error] Unknown measurement_type: {measurement_type}")
+            return None, None, None, None, None, None
+        
+        # Calculate Velocity (1st derivative)
+        vx = np.gradient(x, t_loc)
+        vy = np.gradient(y, t_loc)
+        vz = np.gradient(z, t_loc)
+
+        extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
+        if extracted is None: return None, None, None, None, None, None
+
+        t_full, feat_full = extracted
+        segments, spans = extract_flight_segments(t_full, feat_full)
+
+        return x, y, t_full, feat_full, segments, spans
+
+    except Exception as e:
+        print(f"[Real Flight Extract Error] {csv_path}: {e}")
+        return None, None, None, None, None, None
+
 
 
 def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_color):
