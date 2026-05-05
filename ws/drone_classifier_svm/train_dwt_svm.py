@@ -188,21 +188,24 @@ def main():
         print(f"\n[Processing Folder] {folder}")
         
         # 0. Load PX4 real data (labeled as Class 0)
-        X_px4_real, y_px4_real = load_px4_dataset(folder, data_type='processed', measurement_type='vision')
+        print(f" Loading PX4 real flight data from '{folder}'...")
+        X_px4_real, y_px4_real = load_px4_dataset(folder, data_type='processed', measurement_type='mocap')
         print(f"  --> PX4 Subtotal for {folder}: {len(X_px4_real)} segments.")
         if len(X_px4_real) > 0:
             X_real_ts.extend(X_px4_real)
             y_real.extend(y_px4_real)
             
         # 1. Load ArduPilot real data (labeled as Class 1)
-        X_ardu_real, y_ardu_real = load_ardu_dataset(folder, data_type='processed', measurement_type='vision')
+        print(f" Loading ArduPilot real flight data from '{folder}'...")
+        X_ardu_real, y_ardu_real = load_ardu_dataset(folder, data_type='processed', measurement_type='mocap')
         print(f"  --> ArduPilot Subtotal for {folder}: {len(X_ardu_real)} segments.")
         if len(X_ardu_real) > 0:
             X_real_ts.extend(X_ardu_real)
             y_real.extend(y_ardu_real)
             
         # 2. Load Cogni real data (labeled as Class 2)
-        X_cogni_real, y_cogni_real = load_cogni_dataset(folder, data_type='processed', measurement_type='vision')
+        print(f" Loading Cogni real flight data from '{folder}'...")
+        X_cogni_real, y_cogni_real = load_cogni_dataset(folder, data_type='processed', measurement_type='mocap')
         print(f"  --> Cogni Subtotal for {folder}: {len(X_cogni_real)} segments.")
         if len(X_cogni_real) > 0:
             X_real_ts.extend(X_cogni_real)
@@ -268,6 +271,10 @@ def main():
 
     # --- 단계 3: 시각화 ---
     plot_classification_results(X_train_scaled, X_test_scaled, y_train, y_test, y_pred, target_names, X_real_scaled, y_real, y_real_pred)
+
+
+    # Notes for Debugging
+    #print("Debugging Notes: only 70 SITL sets are used for debugging")
 
 if __name__ == "__main__":
     main()

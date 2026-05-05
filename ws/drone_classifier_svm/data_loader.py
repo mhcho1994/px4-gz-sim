@@ -20,7 +20,7 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
         return X_timeseries, np.array(y)
 
     run_folders = sorted([f for f in os.listdir(base_dir) 
-                         if (f.startswith("run_") or f.startswith("run0")) and (base_dir / f).is_dir()])
+                         if f.startswith("run_") and (base_dir / f).is_dir()])
     
     for run_folder in run_folders:
         if data_type == 'raw':
@@ -46,7 +46,7 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
                     
                     if result[0] is not None:
                         _, _, _, _, segments, _ = result
-                        target_indices = [5, 7]
+                        target_indices = [5, 7, 8]
                         
                         count_in_run = 0
                         if segments['turn'] and len(segments['turn']) > 0:
@@ -78,18 +78,19 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
 
     # Filtering folders starting with 'run'
     run_folders = sorted([f for f in os.listdir(base_dir) 
-                         if (f.startswith("run_") or f.startswith("run0")) and (base_dir / f).is_dir()])
+                         if f.startswith("run_") and (base_dir / f).is_dir()])
     
     for run_folder in run_folders:
-        # Determine the target path and processing function
         if data_type == 'raw':
             ardu_dir = base_dir / run_folder / "ardu_logs" / "raw" / "logs"
             target_ext = '.bin'
             process_func = lambda path: process_ardu_flight_data(path)
+
         elif data_type == 'processed':
             ardu_dir = base_dir / run_folder / "ardu_logs" / "processed"
             target_ext = '.csv'
             process_func = lambda path: process_real_flight_data(path, measurement_type=measurement_type)
+
         else:
             print(f"[Error] Invalid data_type: {data_type}")
             return X_timeseries, np.array(y)
@@ -103,7 +104,7 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
                     
                     if result[0] is not None:
                         _, _, _, _, segments, _ = result
-                        target_indices = [5, 7]
+                        target_indices = [5, 7, 8]
                         
                         count_in_run = 0
                         if segments['turn'] and len(segments['turn']) > 0:
@@ -113,7 +114,6 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
                                 y.append(1)  # Class 1: ArduPilot
                                 count_in_run += 1
                         
-                        # Output segments found for this specific run
                         print(f"    - {run_folder}: {count_in_run} segments extracted.")
                     else:
                         print(f"    - {run_folder}: Extraction failed (Error in processor).")
@@ -134,17 +134,19 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
         return X_timeseries, np.array(y)
     
     run_folders = sorted([f for f in os.listdir(base_dir) 
-                         if (f.startswith("run_") or f.startswith("run0")) and (base_dir / f).is_dir()])
+                         if f.startswith("run_") and (base_dir / f).is_dir()])
 
     for run_folder in run_folders:
         if data_type == 'raw':
             print("[Info] Cogni raw data processing is not implemented yet.")
             print(f"[Error] Invalid data_type: {data_type}")
             return X_timeseries, np.array(y)
+        
         if data_type == 'processed':
             cogni_dir = base_dir / run_folder / "cogni_logs" / "processed"
             target_ext = '.csv'
             process_func = lambda path: process_real_flight_data(path, measurement_type=measurement_type)
+            
         else:
             print(f"[Error] Invalid data_type: {data_type}")
             return X_timeseries, np.array(y)
@@ -158,7 +160,7 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
                     
                     if result[0] is not None:
                         _, _, _, _, segments, _ = result
-                        target_indices = [5, 7]
+                        target_indices = [5, 7, 8]
                         
                         count_in_run = 0
                         if segments['turn'] and len(segments['turn']) > 0:

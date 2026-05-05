@@ -28,16 +28,17 @@ def extract_flight_segments(t, features, dt=0.02, min_turn_duration=0.5,
     az_norm = np.abs(features[:, 4])
     jerk_norm = np.abs(features[:, 7])  
     
-    alt_95 = np.percentile(alt, 95)
-    target_alt = alt_95 - 0.1
+    alt_50 = np.percentile(alt, 50)
+    target_alt = alt_50 - 0.1
     
     # [Step 1] Landing/Take-off
     flight_start_idx = 0
     state = 0
     for i in range(N):
         if state == 0 and alt[i] >= target_alt: state = 1
-        elif state == 1 and vz_norm[i] <= 0.1: state = 2
-        elif state == 2 and az_norm[i] <= 0.1:
+        # if state == 0: state = 1
+        elif state == 1 and vz_norm[i] <= 0.2: state = 2
+        elif state == 2 and az_norm[i] <= 0.2:
             flight_start_idx = i
             break
                 
@@ -45,8 +46,9 @@ def extract_flight_segments(t, features, dt=0.02, min_turn_duration=0.5,
     state = 0
     for i in range(N - 1, flight_start_idx, -1):
         if state == 0 and alt[i] >= target_alt: state = 1
-        elif state == 1 and vz_norm[i] <= 0.1: state = 2
-        elif state == 2 and az_norm[i] <= 0.1:
+        # if state == 0: state = 1
+        elif state == 1 and vz_norm[i] <= 0.2: state = 2
+        elif state == 2 and az_norm[i] <= 0.2:
             flight_end_idx = i
             break
 
@@ -165,18 +167,18 @@ def extract_kinematic_features(t, x, y, z, vx, vy, vz, window_len=200, poly_orde
 
     z_smooth, vx_smooth, vy_smooth, vz_smooth = smooth(z_new), smooth(vx_new), smooth(vy_new), smooth(vz_new)
 
-    altitude = -z_smooth
-    v_alt = -vz_smooth
+    altitude = z_smooth
+    v_alt = vz_smooth
     v_xy = np.vstack((vx_smooth, vy_smooth)).T
     speed_xy = np.linalg.norm(v_xy, axis=1)
     
     ax, ay, az = np.gradient(vx_smooth, DT), np.gradient(vy_smooth, DT), np.gradient(vz_smooth, DT)
-    a_alt = -az
+    a_alt = az
     a_xy = np.vstack((ax, ay)).T
     acc_norm_xy = np.linalg.norm(a_xy, axis=1)
     
     jx, jy, jz = np.gradient(smooth(ax), DT), np.gradient(smooth(ay), DT), np.gradient(smooth(az), DT)
-    j_alt = -jz
+    j_alt = jz
     j_xy = np.vstack((jx, jy)).T
     jerk_norm_xy = np.linalg.norm(j_xy, axis=1)
     
@@ -238,6 +240,9 @@ def process_px4_flight_data(ulog_path):
         t_loc = loc_data['timestamp'] / 1e6
         x, y, z = loc_data['x'], loc_data['y'], loc_data['z']
         vx, vy, vz = loc_data['vx'], loc_data['vy'], loc_data['vz']
+        
+        z = -z
+        vz = -vz
             
         extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
         if extracted is None: return None, None, None, None, None, None
@@ -265,8 +270,9 @@ def process_ardu_flight_data(bin_path):
             vx.append(msg.VN); vy.append(msg.VE); vz.append(msg.VD)
                 
         if len(x) < 50: return None, None, None, None, None, None
-            
-        extracted = extract_kinematic_features(np.array(t_loc), np.array(x), np.array(y), np.array(z), np.array(vx), np.array(vy), np.array(vz))
+        
+        # negative z and vz
+        extracted = extract_kinematic_features(np.array(t_loc), np.array(x), np.array(y), -np.array(z), np.array(vx), np.array(vy), -np.array(vz))
         if extracted is None: return None, None, None, None, None, None
         
         t_full, feat_full = extracted
@@ -285,6 +291,10 @@ def process_rosbag_flight_data(csv_path):
         x, y, z = data['x'], data['y'], data['z']
         vx, vy, vz = data['vx'], data['vy'], data['vz']
         
+        print(f"[ROS Bag] ROS bag is used. check z direction")
+        z = -z
+        vz = -vz
+        
         extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
         if extracted is None: return None, None, None, None, None, None
         
@@ -297,16 +307,25 @@ def process_rosbag_flight_data(csv_path):
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
         return None, None, None, None, None, None
 
-def process_real_flight_data(csv_path, measurement_type='mocap'):
+def process_real_flight_data(csv_path, measurement_type='vision'):
     try:
         data = np.genfromtxt(csv_path, delimiter=',', names=True)
-        t_loc = data['time_s']
+        try : 
+                t_loc = data['time_s']
+        except ValueError:
+            t_loc = data['timestamp']
 
         # Select target columns based on measurement_type
         if measurement_type == 'mocap':
-            x, y, z = data['gtx'], data['gty'], data['gtz']
+            try:
+                x, y, z = data['gtx'], data['gty'], data['gtz']
+            except (ValueError, IndexError):
+                x, y, z = data['gt_x'], data['gt_y'], data['gt_z']
         elif measurement_type == 'vision':
-            x, y, z = data['x_smooth'], data['y_smooth'], data['z_smooth']
+            try:
+                x, y, z = data['xsmooth'], data['ysmooth'], data['zsmooth']
+            except (ValueError, IndexError):
+                x, y, z = data['x_smooth'], data['y_smooth'], data['z_smooth']
         else:
             print(f"[Error] Unknown measurement_type: {measurement_type}")
             return None, None, None, None, None, None
@@ -348,9 +367,9 @@ def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_c
         ax.set_xlabel('Time (s)', fontsize=10)
         ax.grid(True, linestyle='--', alpha=0.5, zorder=1)
         
-        if i == 6: ax.set_ylim(np.percentile(features[:, i], 2), np.percentile(features[:, i], 98))
-        elif i == 7: ax.set_ylim(-1, np.percentile(features[:, i], 98))
-        elif i == 8: ax.set_ylim(-0.1, np.percentile(features[:, i], 98)) 
+        if i == 6: ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
+        elif i == 7: ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
+        elif i == 8: ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
 
         if spans:
             if spans.get('takeoff'): ax.axvspan(*spans['takeoff'], color=span_colors['takeoff'], alpha=0.2, zorder=0)
@@ -388,9 +407,9 @@ def plot_turn_segment_features(t, features, title, save_path, line_color):
         ax.set_xlabel('Absolute Time (s)', fontsize=10)
         ax.grid(True, linestyle='--', alpha=0.7)
         
-        if i == 6: ax.set_ylim(np.percentile(features[:, i], 2), np.percentile(features[:, i], 98))
-        elif i == 7: ax.set_ylim(-1, np.percentile(features[:, i], 98))
-        elif i == 8: ax.set_ylim(-0.1, np.percentile(features[:, i], 98)) 
+        if i == 6: ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
+        elif i == 7: ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
+        elif i == 8: ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
             
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -398,7 +417,7 @@ def plot_turn_segment_features(t, features, title, save_path, line_color):
 
 
 def main():
-    BASE_DATA_DIR = Path("data") 
+    BASE_DATA_DIR = Path("data/sitl_logs") 
     print("[Info] Starting Combined Pipeline: XY / Full Highlights / Segments...\n")
 
     if not BASE_DATA_DIR.exists():
@@ -418,23 +437,28 @@ def main():
         px4_dir = run_dir / "px4_logs" / "raw"
         ardu_dir = run_dir / "ardu_logs" / "raw" / "logs"
         
-        x_px4, y_px4, t_px4, feat_px4, turn_px4, spans_px4 = (None,) * 6
-        x_ardu, y_ardu, t_ardu, feat_ardu, turn_ardu, spans_ardu = (None,) * 6
+        x_px4, y_px4, t_px4, feat_px4, segments_px4, spans_px4 = (None,) * 6
+        x_ardu, y_ardu, t_ardu, feat_ardu, segments_ardu, spans_ardu = (None,) * 6
         
+        # Load PX4 Data
         if px4_dir.exists():
             for file in os.listdir(px4_dir):
                 if file.lower().endswith('.ulg'):
                     px4_result = process_px4_flight_data(str(px4_dir / file))
-                    x_px4, y_px4, t_px4, feat_px4, turn_px4, spans_px4 = px4_result
+                    # [Fix] Correctly unpack the segments dictionary
+                    x_px4, y_px4, t_px4, feat_px4, segments_px4, spans_px4 = px4_result
                     break 
 
+        # Load ArduPilot Data
         if ardu_dir.exists():
             for file in os.listdir(ardu_dir):
                 if file.lower().endswith('.bin'):
                     ardu_result = process_ardu_flight_data(str(ardu_dir / file))
-                    x_ardu, y_ardu, t_ardu, feat_ardu, turn_ardu, spans_ardu = ardu_result
+                    # [Fix] Correctly unpack the segments dictionary
+                    x_ardu, y_ardu, t_ardu, feat_ardu, segments_ardu, spans_ardu = ardu_result
                     break
 
+        # Plot Combined XY Trajectory
         if (x_px4 is not None) or (x_ardu is not None):
             plot_combined_xy_trajectory(
                 x_px4, y_px4, x_ardu, y_ardu, 
@@ -442,6 +466,7 @@ def main():
                 save_path=str(run_dir / f"trajectory_xy_combined_{run_folder}.png")
             )
 
+        # Plot PX4 Segment Highlights and Isolated Turn
         if feat_px4 is not None and len(feat_px4) > 0:
             print(f"[{run_folder}] Generating PX4 Trajectory plot (Visualizing Segments)...")
             plot_full_trajectory_with_spans(
@@ -451,8 +476,11 @@ def main():
                 line_color='tab:green' 
             )
             
-            if turn_px4 and len(turn_px4) > 0:
-                t_turn, feat_turn = turn_px4[0]
+            # [Fix] Access the dictionary properly to extract turn features
+            if segments_px4 and segments_px4['turn'] and len(segments_px4['turn']) > 0:
+                t_turn = segments_px4['turn'][0]['time']
+                feat_turn = segments_px4['turn'][0]['features']
+                
                 plot_turn_segment_features(
                     t=t_turn, features=feat_turn, 
                     title=f"Trajectory [Isolated Turn]: PX4 ({run_folder})", 
@@ -460,7 +488,7 @@ def main():
                     line_color='tab:green' 
                 )
 
-    
+        # Plot ArduPilot Segment Highlights and Isolated Turn
         if feat_ardu is not None and len(feat_ardu) > 0:
             print(f"[{run_folder}] Generating ArduPilot Trajectory plot (Visualizing Segments)...")
             plot_full_trajectory_with_spans(
@@ -470,8 +498,11 @@ def main():
                 line_color='tab:orange' 
             )
             
-            if turn_ardu and len(turn_ardu) > 0:
-                t_turn, feat_turn = turn_ardu[0]
+            # [Fix] Access the dictionary properly to extract turn features
+            if segments_ardu and segments_ardu['turn'] and len(segments_ardu['turn']) > 0:
+                t_turn = segments_ardu['turn'][0]['time']
+                feat_turn = segments_ardu['turn'][0]['features']
+                
                 plot_turn_segment_features(
                     t=t_turn, features=feat_turn, 
                     title=f"Trajectory [Isolated Turn]: ArduPilot ({run_folder})", 
@@ -482,5 +513,6 @@ def main():
     print("\n[Info] All combined XY and segmentation plots generated successfully!")
 
 
+    
 if __name__ == "__main__":
     main()
