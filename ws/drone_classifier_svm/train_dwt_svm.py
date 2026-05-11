@@ -180,7 +180,7 @@ def main():
     print("  REAL FLIGHT DATA LOADING")
     print("="*30)
     
-    test_folders = ["260424_flight_logs"]
+    test_folders = ["260501_flight_logs_old"]
     X_real_ts = []
     y_real = []
 

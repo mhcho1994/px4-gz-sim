@@ -15,7 +15,7 @@ import matplotlib
 # WSL 환경 등 디스플레이가 없는 경우를 위한 백엔드 설정
 matplotlib.use('Agg')
 
-from data_loader import load_px4_dataset, load_ardu_dataset, load_cogni_dataset
+from data_loader import load_px4_dataset, load_ardu_dataset, load_cogni_dataset, FEATURE_MAP
 
 # =====================================================================
 # 3. DWT 특징 추출 함수
@@ -215,11 +215,12 @@ def main():
         file_path = item["path"]
         if Path(file_path).exists():
             # Process the CSV to get the full feature matrix and time array
-            _, _, t_full, feat_full, _, _ = process_real_flight_data(file_path, measurement_type=item["measurement_type"])
+            _, t_full, feat_full, _, _ = process_real_flight_data(file_path, measurement_type=item["measurement_type"])
             
             if t_full is not None:
                 start_t, end_t = item["span"]
-                target_indices = [5, 7, 8] # Target: Accel Norm XY, Jerk Norm XY
+                target_features = ['XY-Accel', 'XY-Jerk', 'Curvature']
+                target_indices = [FEATURE_MAP[f] for f in target_features]
                 
                 # Slice the array based on the manual time span
                 idx = np.where((t_full >= start_t) & (t_full <= end_t))[0]

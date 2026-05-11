@@ -6,8 +6,9 @@ import numpy as np
 from signal_processor import (
     process_px4_flight_data, 
     process_ardu_flight_data, 
-    process_real_flight_data
-    # process_cogni_flight_data  # To be implemented later
+    process_real_flight_data,
+    # process_cogni_flight_data,  # To be implemented later
+    FEATURE_MAP
 )
 
 def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
@@ -45,8 +46,9 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
                     result = process_func(str(px4_dir / file))
                     
                     if result[0] is not None:
-                        _, _, _, _, segments, _ = result
-                        target_indices = [5, 7, 8]
+                        _, _, _, segments, _ = result
+                        target_features = ['XY-Accel', 'XY-Jerk', 'Curvature']
+                        target_indices = [FEATURE_MAP[f] for f in target_features]
                         
                         count_in_run = 0
                         if segments['turn'] and len(segments['turn']) > 0:
@@ -103,8 +105,9 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
                     result = process_func(str(ardu_dir / file))
                     
                     if result[0] is not None:
-                        _, _, _, _, segments, _ = result
-                        target_indices = [5, 7, 8]
+                        _, _, _, segments, _ = result
+                        target_features = ['XY-Accel', 'XY-Jerk', 'Curvature']
+                        target_indices = [FEATURE_MAP[f] for f in target_features]
                         
                         count_in_run = 0
                         if segments['turn'] and len(segments['turn']) > 0:
@@ -159,8 +162,9 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
                     result = process_func(str(cogni_dir / file))
                     
                     if result[0] is not None:
-                        _, _, _, _, segments, _ = result
-                        target_indices = [5, 7, 8]
+                        _, _, _, segments, _ = result
+                        target_features = ['XY-Accel', 'XY-Jerk', 'Curvature']
+                        target_indices = [FEATURE_MAP[f] for f in target_features]
                         
                         count_in_run = 0
                         if segments['turn'] and len(segments['turn']) > 0:

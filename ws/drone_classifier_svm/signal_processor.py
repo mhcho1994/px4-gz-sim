@@ -6,13 +6,26 @@ from scipy.signal import savgol_filter
 from pyulog import ULog
 from pymavlink import mavutil
 import os
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib
-matplotlib.use('Agg')  
+# import matplotlib.pyplot as plt
+# import matplotlib.patches as mpatches
+# import matplotlib
+# matplotlib.use('Agg')  
 
 TARGET_HZ = 50.0  
 DT = 1.0 / TARGET_HZ #20ms
+FEATURE_MAP = {
+    'Altitude': 0,
+    'Heading': 1,
+    'VZ': 2,
+    'XY-Speed': 3,
+    'AZ': 4,
+    'XY-Accel': 5,
+    'JZ': 6,
+    'XY-Jerk': 7,
+    'Curvature': 8,
+    'YawRate': 9,
+    'SlipRate': 10
+}
 
 def extract_flight_segments(t, features, dt=0.02, min_turn_duration=0.5, 
                           yaw_rate_threshold=0.2, straight_duration=1.0, heading_margin=0.2):
@@ -202,36 +215,6 @@ def extract_kinematic_features(t, x, y, z, vx, vy, vz, window_len=200, poly_orde
     
     return t_new, features
 
-# =====================================================================
-# PLOT
-# =====================================================================
-def plot_combined_xy_trajectory(x_px4, y_px4, x_ardu, y_ardu, title="Combined X-Y Trajectory", save_path="xy_trajectory.png"):
-    if (x_px4 is None or len(x_px4) == 0) and (x_ardu is None or len(x_ardu) == 0):
-        return
-
-    fig, ax = plt.subplots(figsize=(8, 8))
-    
-    # PX4 (Green)
-    if x_px4 is not None and len(x_px4) > 0:
-        ax.plot(y_px4, x_px4, color='tab:green', linewidth=1.5, alpha=0.8, label='PX4 Path')
-        ax.plot(y_px4[0], x_px4[0], marker='o', color='darkgreen', markersize=6, label='PX4 Start')
-        ax.plot(y_px4[-1], x_px4[-1], marker='X', color='darkgreen', markersize=6, label='PX4 End')
-
-    # ArduPilot (Orange)
-    if x_ardu is not None and len(x_ardu) > 0:
-        ax.plot(y_ardu, x_ardu, color='tab:orange', linewidth=1.5, alpha=0.8, label='ArduPilot Path')
-        ax.plot(y_ardu[0], x_ardu[0], marker='o', color='darkorange', markersize=6, label='ArduPilot Start')
-        ax.plot(y_ardu[-1], x_ardu[-1], marker='X', color='darkorange', markersize=6, label='ArduPilot End')
-    
-    ax.set_aspect('equal', adjustable='datalim')
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    ax.set_xlabel('East (Y) [m]', fontsize=12)
-    ax.set_ylabel('North (X) [m]', fontsize=12)
-    ax.grid(True, linestyle='--', alpha=0.7)
-    ax.legend()
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
 
 def process_px4_flight_data(ulog_path):
     try:
@@ -245,17 +228,19 @@ def process_px4_flight_data(ulog_path):
         vz = -vz
             
         extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
-        if extracted is None: return None, None, None, None, None, None
+        if extracted is None: return None, None, None, None, None
         
         t_full, feat_full = extracted
         segments, spans = extract_flight_segments(t_full, feat_full)
         
-        # X, Y 원본 데이터도 함께 반환
-        return x, y, t_full, feat_full, segments, spans
+        # Bundle raw data into a single dictionary
+        raw_data = {'t': t_loc, 'x': x, 'y': y, 'z': z, 'vx': vx, 'vy': vy, 'vz': vz}
+        
+        return raw_data, t_full, feat_full, segments, spans
         
     except Exception as e:
         print(f"[PX4 Extract Error] {ulog_path}: {e}")
-        return None, None, None, None, None, None
+        return None, None, None, None, None
 
 def process_ardu_flight_data(bin_path):
     try:
@@ -265,24 +250,27 @@ def process_ardu_flight_data(bin_path):
         while True:
             msg = mlog.recv_match(type=['XKF1', 'NKF1'], blocking=False)
             if not msg: break
-            t_loc.append(msg.TimeUS / 1e6)
-            x.append(msg.PN); y.append(msg.PE); z.append(msg.PD)
-            vx.append(msg.VN); vy.append(msg.VE); vz.append(msg.VD)
+            t_loc.append(msg.TimeUS / 1e6) 
+            # negative z and vz
+            x.append(msg.PN); y.append(msg.PE); z.append(-msg.PD)
+            vx.append(msg.VN); vy.append(msg.VE); vz.append(-msg.VD)
                 
-        if len(x) < 50: return None, None, None, None, None, None
+        if len(x) < 50: return None, None, None, None, None
         
-        # negative z and vz
-        extracted = extract_kinematic_features(np.array(t_loc), np.array(x), np.array(y), -np.array(z), np.array(vx), np.array(vy), -np.array(vz))
-        if extracted is None: return None, None, None, None, None, None
+        extracted = extract_kinematic_features(np.array(t_loc), np.array(x), np.array(y), np.array(z), np.array(vx), np.array(vy), np.array(vz))
+        if extracted is None: return None, None, None, None, None
         
         t_full, feat_full = extracted
         segments, spans = extract_flight_segments(t_full, feat_full)
         
-        return x, y, t_full, feat_full, segments, spans
+        # Bundle raw data into a single dictionary
+        raw_data = {'t': t_loc, 'x': x, 'y': y, 'z': z, 'vx': vx, 'vy': vy, 'vz': vz}
+        
+        return raw_data, t_full, feat_full, segments, spans
         
     except Exception as e:
         print(f"[ArduPilot Extract Error] {bin_path}: {e}")
-        return None, None, None, None, None, None
+        return None, None, None, None, None
 
 def process_rosbag_flight_data(csv_path):
     try:
@@ -296,16 +284,19 @@ def process_rosbag_flight_data(csv_path):
         vz = -vz
         
         extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
-        if extracted is None: return None, None, None, None, None, None
+        if extracted is None: return None, None, None, None, None
         
         t_full, feat_full = extracted
         segments, spans = extract_flight_segments(t_full, feat_full)
         
-        return x, y, t_full, feat_full, segments, spans
+        # Bundle raw data into a single dictionary
+        raw_data = {'t': t_loc, 'x': x, 'y': y, 'z': z, 'vx': vx, 'vy': vy, 'vz': vz}
+        
+        return raw_data, t_full, feat_full, segments, spans
         
     except Exception as e:
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
-        return None, None, None, None, None, None
+        return None, None, None, None, None
 
 def process_real_flight_data(csv_path, measurement_type='vision'):
     try:
@@ -328,7 +319,7 @@ def process_real_flight_data(csv_path, measurement_type='vision'):
                 x, y, z = data['x_smooth'], data['y_smooth'], data['z_smooth']
         else:
             print(f"[Error] Unknown measurement_type: {measurement_type}")
-            return None, None, None, None, None, None
+            return None, None, None, None, None
         
         # Calculate Velocity (1st derivative)
         vx = np.gradient(x, t_loc)
@@ -336,181 +327,117 @@ def process_real_flight_data(csv_path, measurement_type='vision'):
         vz = np.gradient(z, t_loc)
 
         extracted = extract_kinematic_features(t_loc, x, y, z, vx, vy, vz)
-        if extracted is None: return None, None, None, None, None, None
+        if extracted is None: return None, None, None, None, None
 
         t_full, feat_full = extracted
         segments, spans = extract_flight_segments(t_full, feat_full)
 
-        return x, y, t_full, feat_full, segments, spans
+        # Bundle raw data into a single dictionary
+        raw_data = {'t': t_loc, 'x': x, 'y': y, 'z': z, 'vx': vx, 'vy': vy, 'vz': vz}
+
+        return raw_data, t_full, feat_full, segments, spans
 
     except Exception as e:
         print(f"[Real Flight Extract Error] {csv_path}: {e}")
-        return None, None, None, None, None, None
-
-
-
-def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_color):
-    if features is None or len(features) == 0: return
-
-    feature_names = ['Altitude (m)', 'Heading (rad)', 'Z-Axis Velocity (m/s)', 'XY-Plane Speed (m/s)', 'Z-Axis Acceleration (m/s²)', 'XY-Plane Accel Norm (m/s²)', 'Z-Axis Jerk (m/s³)', 'XY-Plane Jerk Norm (m/s³)', 'Curvature (1/m)', 'Yaw rate (rad/s)']
-    
-    fig, axes = plt.subplots(5, 2, figsize=(16, 18))
-    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
-    axes_flat = axes.flatten()
-    
-    span_colors = {'takeoff': 'orange', 'straight': 'mediumseagreen', 'turn': 'crimson', 'landing': 'mediumpurple'}
-
-    for i in range(10):
-        ax = axes_flat[i]
-        ax.plot(t, features[:, i], color=line_color, linewidth=1.5, zorder=2)
-        ax.set_title(feature_names[i], fontsize=12, fontweight='bold')
-        ax.set_xlabel('Time (s)', fontsize=10)
-        ax.grid(True, linestyle='--', alpha=0.5, zorder=1)
-        
-        if i == 6: ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
-        elif i == 7: ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
-        elif i == 8: ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
-
-        if spans:
-            if spans.get('takeoff'): ax.axvspan(*spans['takeoff'], color=span_colors['takeoff'], alpha=0.2, zorder=0)
-            if spans.get('landing'): ax.axvspan(*spans['landing'], color=span_colors['landing'], alpha=0.2, zorder=0)
-            for s, e in spans.get('straight', []): ax.axvspan(s, e, color=span_colors['straight'], alpha=0.2, zorder=0)
-            for s, e in spans.get('turn', []): ax.axvspan(s, e, color=span_colors['turn'], alpha=0.4, zorder=0) 
-    
-    if spans:
-        legend_patches = [
-            mpatches.Patch(color=span_colors['takeoff'], alpha=0.2, label='Take-off'),
-            mpatches.Patch(color=span_colors['straight'], alpha=0.2, label='Straight'),
-            mpatches.Patch(color=span_colors['turn'], alpha=0.4, label='Turn (Target)'),
-            mpatches.Patch(color=span_colors['landing'], alpha=0.2, label='Landing')
-        ]
-        fig.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(0.95, 0.98), ncol=4, fontsize=12)
-            
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-
-
-def plot_turn_segment_features(t, features, title, save_path, line_color):
-    if features is None or len(features) == 0: return
-
-    feature_names = ['Altitude (m)', 'Heading (rad)', 'Z-Axis Velocity (m/s)', 'XY-Plane Speed (m/s)', 'Z-Axis Acceleration (m/s²)', 'XY-Plane Accel Norm (m/s²)', 'Z-Axis Jerk (m/s³)', 'XY-Plane Jerk Norm (m/s³)', 'Curvature (1/m)', 'Yaw rate (rad/s)']
-    
-    fig, axes = plt.subplots(5, 2, figsize=(16, 18))
-    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
-    axes_flat = axes.flatten()
-    
-    for i in range(10):
-        ax = axes_flat[i]
-        ax.plot(t, features[:, i], color=line_color, linewidth=2.0)
-        ax.set_title(feature_names[i], fontsize=12, fontweight='bold')
-        ax.set_xlabel('Absolute Time (s)', fontsize=10)
-        ax.grid(True, linestyle='--', alpha=0.7)
-        
-        if i == 6: ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
-        elif i == 7: ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
-        elif i == 8: ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
-            
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+        return None, None, None, None, None
 
 
 def main():
-    BASE_DATA_DIR = Path("data/sitl_logs") 
-    print("[Info] Starting Combined Pipeline: XY / Full Highlights / Segments...\n")
+    pass
+    # BASE_DATA_DIR = Path("data/sitl_logs") 
+    # print("[Info] Starting Combined Pipeline: XY / Full Highlights / Segments...\n")
 
-    if not BASE_DATA_DIR.exists():
-        print(f"[Error] Data directory not found: {BASE_DATA_DIR}")
-        return
+    # if not BASE_DATA_DIR.exists():
+    #     print(f"[Error] Data directory not found: {BASE_DATA_DIR}")
+    #     return
 
-    run_folders = sorted([f for f in os.listdir(BASE_DATA_DIR) 
-                         if f.startswith("run_")  and (BASE_DATA_DIR / f).is_dir()])
+    # run_folders = sorted([f for f in os.listdir(BASE_DATA_DIR) 
+    #                      if f.startswith("run_")  and (BASE_DATA_DIR / f).is_dir()])
 
-    if not run_folders:
-        print(f"[Warning] No run folders found in {BASE_DATA_DIR}")
-        return
+    # if not run_folders:
+    #     print(f"[Warning] No run folders found in {BASE_DATA_DIR}")
+    #     return
 
-    for run_folder in run_folders:
-        run_dir = BASE_DATA_DIR / run_folder
+    # for run_folder in run_folders:
+    #     run_dir = BASE_DATA_DIR / run_folder
         
-        px4_dir = run_dir / "px4_logs" / "raw"
-        ardu_dir = run_dir / "ardu_logs" / "raw" / "logs"
+    #     px4_dir = run_dir / "px4_logs" / "raw"
+    #     ardu_dir = run_dir / "ardu_logs" / "raw" / "logs"
         
-        x_px4, y_px4, t_px4, feat_px4, segments_px4, spans_px4 = (None,) * 6
-        x_ardu, y_ardu, t_ardu, feat_ardu, segments_ardu, spans_ardu = (None,) * 6
+    #     x_px4, y_px4, t_px4, feat_px4, segments_px4, spans_px4 = (None,) * 6
+    #     x_ardu, y_ardu, t_ardu, feat_ardu, segments_ardu, spans_ardu = (None,) * 6
         
-        # Load PX4 Data
-        if px4_dir.exists():
-            for file in os.listdir(px4_dir):
-                if file.lower().endswith('.ulg'):
-                    px4_result = process_px4_flight_data(str(px4_dir / file))
-                    # [Fix] Correctly unpack the segments dictionary
-                    x_px4, y_px4, t_px4, feat_px4, segments_px4, spans_px4 = px4_result
-                    break 
+    #     # Load PX4 Data
+    #     if px4_dir.exists():
+    #         for file in os.listdir(px4_dir):
+    #             if file.lower().endswith('.ulg'):
+    #                 px4_result = process_px4_flight_data(str(px4_dir / file))
+    #                 # [Fix] Correctly unpack the segments dictionary
+    #                 x_px4, y_px4, t_px4, feat_px4, segments_px4, spans_px4 = px4_result
+    #                 break 
 
-        # Load ArduPilot Data
-        if ardu_dir.exists():
-            for file in os.listdir(ardu_dir):
-                if file.lower().endswith('.bin'):
-                    ardu_result = process_ardu_flight_data(str(ardu_dir / file))
-                    # [Fix] Correctly unpack the segments dictionary
-                    x_ardu, y_ardu, t_ardu, feat_ardu, segments_ardu, spans_ardu = ardu_result
-                    break
+    #     # Load ArduPilot Data
+    #     if ardu_dir.exists():
+    #         for file in os.listdir(ardu_dir):
+    #             if file.lower().endswith('.bin'):
+    #                 ardu_result = process_ardu_flight_data(str(ardu_dir / file))
+    #                 # [Fix] Correctly unpack the segments dictionary
+    #                 x_ardu, y_ardu, t_ardu, feat_ardu, segments_ardu, spans_ardu = ardu_result
+    #                 break
 
-        # Plot Combined XY Trajectory
-        if (x_px4 is not None) or (x_ardu is not None):
-            plot_combined_xy_trajectory(
-                x_px4, y_px4, x_ardu, y_ardu, 
-                title=f"Combined X-Y Trajectory ({run_folder})", 
-                save_path=str(run_dir / f"trajectory_xy_combined_{run_folder}.png")
-            )
+    #     # Plot Combined XY Trajectory
+    #     if (x_px4 is not None) or (x_ardu is not None):
+    #         plot_combined_xy_trajectory(
+    #             x_px4, y_px4, x_ardu, y_ardu, 
+    #             title=f"Combined X-Y Trajectory ({run_folder})", 
+    #             save_path=str(run_dir / f"trajectory_xy_combined_{run_folder}.png")
+    #         )
 
-        # Plot PX4 Segment Highlights and Isolated Turn
-        if feat_px4 is not None and len(feat_px4) > 0:
-            print(f"[{run_folder}] Generating PX4 Trajectory plot (Visualizing Segments)...")
-            plot_full_trajectory_with_spans(
-                t=t_px4, features=feat_px4, spans=spans_px4, 
-                title=f"Trajectory [Segment Check]: PX4 ({run_folder})", 
-                save_path=str(run_dir / f"features_px4_seg_check_{run_folder}.png"),
-                line_color='tab:green' 
-            )
+    #     # Plot PX4 Segment Highlights and Isolated Turn
+    #     if feat_px4 is not None and len(feat_px4) > 0:
+    #         print(f"[{run_folder}] Generating PX4 Trajectory plot (Visualizing Segments)...")
+    #         plot_full_trajectory_with_spans(
+    #             t=t_px4, features=feat_px4, spans=spans_px4, 
+    #             title=f"Trajectory [Segment Check]: PX4 ({run_folder})", 
+    #             save_path=str(run_dir / f"features_px4_seg_check_{run_folder}.png"),
+    #             line_color='tab:green' 
+    #         )
             
-            # [Fix] Access the dictionary properly to extract turn features
-            if segments_px4 and segments_px4['turn'] and len(segments_px4['turn']) > 0:
-                t_turn = segments_px4['turn'][0]['time']
-                feat_turn = segments_px4['turn'][0]['features']
+    #         # [Fix] Access the dictionary properly to extract turn features
+    #         if segments_px4 and segments_px4['turn'] and len(segments_px4['turn']) > 0:
+    #             t_turn = segments_px4['turn'][0]['time']
+    #             feat_turn = segments_px4['turn'][0]['features']
                 
-                plot_turn_segment_features(
-                    t=t_turn, features=feat_turn, 
-                    title=f"Trajectory [Isolated Turn]: PX4 ({run_folder})", 
-                    save_path=str(run_dir / f"features_px4_turn_seg_{run_folder}.png"),
-                    line_color='tab:green' 
-                )
+    #             plot_turn_segment_features(
+    #                 t=t_turn, features=feat_turn, 
+    #                 title=f"Trajectory [Isolated Turn]: PX4 ({run_folder})", 
+    #                 save_path=str(run_dir / f"features_px4_turn_seg_{run_folder}.png"),
+    #                 line_color='tab:green' 
+    #             )
 
-        # Plot ArduPilot Segment Highlights and Isolated Turn
-        if feat_ardu is not None and len(feat_ardu) > 0:
-            print(f"[{run_folder}] Generating ArduPilot Trajectory plot (Visualizing Segments)...")
-            plot_full_trajectory_with_spans(
-                t=t_ardu, features=feat_ardu, spans=spans_ardu, 
-                title=f"Trajectory [Segment Check]: ArduPilot ({run_folder})", 
-                save_path=str(run_dir / f"features_ardupilot_seg_check_{run_folder}.png"),
-                line_color='tab:orange' 
-            )
+    #     # Plot ArduPilot Segment Highlights and Isolated Turn
+    #     if feat_ardu is not None and len(feat_ardu) > 0:
+    #         print(f"[{run_folder}] Generating ArduPilot Trajectory plot (Visualizing Segments)...")
+    #         plot_full_trajectory_with_spans(
+    #             t=t_ardu, features=feat_ardu, spans=spans_ardu, 
+    #             title=f"Trajectory [Segment Check]: ArduPilot ({run_folder})", 
+    #             save_path=str(run_dir / f"features_ardupilot_seg_check_{run_folder}.png"),
+    #             line_color='tab:orange' 
+    #         )
             
-            # [Fix] Access the dictionary properly to extract turn features
-            if segments_ardu and segments_ardu['turn'] and len(segments_ardu['turn']) > 0:
-                t_turn = segments_ardu['turn'][0]['time']
-                feat_turn = segments_ardu['turn'][0]['features']
+    #         # [Fix] Access the dictionary properly to extract turn features
+    #         if segments_ardu and segments_ardu['turn'] and len(segments_ardu['turn']) > 0:
+    #             t_turn = segments_ardu['turn'][0]['time']
+    #             feat_turn = segments_ardu['turn'][0]['features']
                 
-                plot_turn_segment_features(
-                    t=t_turn, features=feat_turn, 
-                    title=f"Trajectory [Isolated Turn]: ArduPilot ({run_folder})", 
-                    save_path=str(run_dir / f"features_ardupilot_turn_seg_{run_folder}.png"),
-                    line_color='tab:orange' 
-                )
+    #             plot_turn_segment_features(
+    #                 t=t_turn, features=feat_turn, 
+    #                 title=f"Trajectory [Isolated Turn]: ArduPilot ({run_folder})", 
+    #                 save_path=str(run_dir / f"features_ardupilot_turn_seg_{run_folder}.png"),
+    #                 line_color='tab:orange' 
+    #             )
 
-    print("\n[Info] All combined XY and segmentation plots generated successfully!")
+    # print("\n[Info] All combined XY and segmentation plots generated successfully!")
 
 
     
