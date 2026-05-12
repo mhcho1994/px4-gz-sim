@@ -174,8 +174,11 @@ def plot_dwt_features(t, data, target_indices, feature_names, title, save_path, 
 
 def run_visualization_pipeline(base_folder_name, is_sitl=True):
     BASE_DATA_DIR = Path("data") / base_folder_name
-    SAVE_BASE_DIR = Path("results_svm_figs") / base_folder_name
-    
+    SAVE_BASE_DIR = Path("data") / f"{base_folder_name}_visualization"
+    if not BASE_DATA_DIR.exists():
+        print(f"[Error] Folder not found: {BASE_DATA_DIR}")
+        return
+
     if not BASE_DATA_DIR.exists():
         print(f"[Error] Folder not found: {BASE_DATA_DIR}")
         return
@@ -313,8 +316,8 @@ def main():
     
     # 2. Process Real Flight Logs (Update folder name as needed)
     run_visualization_pipeline("260417_flight_logs", is_sitl=False)
-    # run_visualization_pipeline("260424_flight_logs", is_sitl=False)
-    # run_visualization_pipeline("260501_flight_logs_old", is_sitl=False)
+    run_visualization_pipeline("260424_flight_logs", is_sitl=False)
+    run_visualization_pipeline("260501_flight_logs_old", is_sitl=False)
 
     print("\n[Success] All visualizations generated in 'results_svm_figs/' directory.")
 
