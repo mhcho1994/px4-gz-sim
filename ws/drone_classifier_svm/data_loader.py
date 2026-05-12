@@ -15,10 +15,11 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
     base_dir = Path("data") / folder_name
     X_timeseries = []
     y = []
+    run_names = []
     
     if not base_dir.exists():
         print(f"[Warning] Directory not found: {base_dir}")
-        return X_timeseries, np.array(y)
+        return X_timeseries, np.array(y), run_names
 
     run_folders = sorted([f for f in os.listdir(base_dir) 
                          if f.startswith("run_") and (base_dir / f).is_dir()])
@@ -36,7 +37,7 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
             
         else:
             print(f"[Error] Invalid data_type: {data_type}")
-            return X_timeseries, np.array(y)
+            return X_timeseries, np.array(y), run_names
 
         found_file = False
         if px4_dir.exists():
@@ -56,6 +57,7 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
                                 feat_turn = turn_segment['features'][:, target_indices]
                                 X_timeseries.append(feat_turn) 
                                 y.append(0)  # Class 0: PX4
+                                run_names.append(run_folder)
                                 count_in_run += 1
                                 
                         print(f"    - {run_folder}: {count_in_run} segments extracted.")
@@ -66,17 +68,18 @@ def load_px4_dataset(folder_name, data_type='raw', measurement_type='vision'):
         if not found_file:
             print(f"    - {run_folder}: No target file ({target_ext}) found.")
 
-    return X_timeseries, np.array(y)
+    return X_timeseries, np.array(y), run_names
 
 
 def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
     base_dir = Path("data") / folder_name
     X_timeseries = []
     y = []
+    run_names = []
     
     if not base_dir.exists():
         print(f"[Warning] Directory not found: {base_dir}")
-        return X_timeseries, np.array(y)
+        return X_timeseries, np.array(y), run_names
 
     # Filtering folders starting with 'run'
     run_folders = sorted([f for f in os.listdir(base_dir) 
@@ -95,7 +98,7 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
 
         else:
             print(f"[Error] Invalid data_type: {data_type}")
-            return X_timeseries, np.array(y)
+            return X_timeseries, np.array(y), run_names
 
         found_file = False
         if ardu_dir.exists():
@@ -115,6 +118,7 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
                                 feat_turn = turn_segment['features'][:, target_indices]
                                 X_timeseries.append(feat_turn) 
                                 y.append(1)  # Class 1: ArduPilot
+                                run_names.append(run_folder)
                                 count_in_run += 1
                         
                         print(f"    - {run_folder}: {count_in_run} segments extracted.")
@@ -125,16 +129,17 @@ def load_ardu_dataset(folder_name, data_type='raw', measurement_type='vision'):
         if not found_file:
             print(f"    - {run_folder}: No target file ({target_ext}) found.")
 
-    return X_timeseries, np.array(y)
+    return X_timeseries, np.array(y), run_names
 
 def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vision'):
     base_dir = Path("data") / folder_name
     X_timeseries = []
     y = []
-    
+    run_names = []
+
     if not base_dir.exists():
         print(f"[Warning] Directory not found: {base_dir}")
-        return X_timeseries, np.array(y)
+        return X_timeseries, np.array(y), run_names
     
     run_folders = sorted([f for f in os.listdir(base_dir) 
                          if f.startswith("run_") and (base_dir / f).is_dir()])
@@ -143,8 +148,8 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
         if data_type == 'raw':
             print("[Info] Cogni raw data processing is not implemented yet.")
             print(f"[Error] Invalid data_type: {data_type}")
-            return X_timeseries, np.array(y)
-        
+            return X_timeseries, np.array(y), run_names
+
         if data_type == 'processed':
             cogni_dir = base_dir / run_folder / "cogni_logs" / "processed"
             target_ext = '.csv'
@@ -152,7 +157,7 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
             
         else:
             print(f"[Error] Invalid data_type: {data_type}")
-            return X_timeseries, np.array(y)
+            return X_timeseries, np.array(y), run_names
 
         found_file = False
         if cogni_dir.exists():
@@ -172,6 +177,7 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
                                 feat_turn = turn_segment['features'][:, target_indices]
                                 X_timeseries.append(feat_turn)
                                 y.append(2)  # Class 2: Cogni
+                                run_names.append(run_folder)
                                 count_in_run += 1
                                 
                         print(f"    - {run_folder}: {count_in_run} segments extracted.")
@@ -182,4 +188,4 @@ def load_cogni_dataset(folder_name, data_type='processed', measurement_type='vis
         if not found_file:
             print(f"    - {run_folder}: No target file ({target_ext}) found.")
                     
-    return X_timeseries, np.array(y)
+    return X_timeseries, np.array(y), run_names

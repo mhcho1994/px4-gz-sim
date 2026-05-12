@@ -50,34 +50,6 @@ def plot_3d_trajectory_comparison(x1, y1, z1, x2, y2, z2, labels, title, save_pa
     plt.close()
 
 
-# def plot_combined_xy_trajectory(x_px4, y_px4, x_ardu, y_ardu, title="Combined X-Y Trajectory", save_path="xy_trajectory.png"):
-#     if (x_px4 is None or len(x_px4) == 0) and (x_ardu is None or len(x_ardu) == 0):
-#         return
-
-#     fig, ax = plt.subplots(figsize=(8, 8))
-    
-#     # PX4 (Green)
-#     if x_px4 is not None and len(x_px4) > 0:
-#         ax.plot(y_px4, x_px4, color='tab:green', linewidth=1.5, alpha=0.8, label='PX4 Path')
-#         ax.plot(y_px4[0], x_px4[0], marker='o', color='darkgreen', markersize=6, label='PX4 Start')
-#         ax.plot(y_px4[-1], x_px4[-1], marker='X', color='darkgreen', markersize=6, label='PX4 End')
-
-#     # ArduPilot (Orange)
-#     if x_ardu is not None and len(x_ardu) > 0:
-#         ax.plot(y_ardu, x_ardu, color='tab:orange', linewidth=1.5, alpha=0.8, label='ArduPilot Path')
-#         ax.plot(y_ardu[0], x_ardu[0], marker='o', color='darkorange', markersize=6, label='ArduPilot Start')
-#         ax.plot(y_ardu[-1], x_ardu[-1], marker='X', color='darkorange', markersize=6, label='ArduPilot End')
-    
-#     ax.set_aspect('equal', adjustable='datalim')
-#     ax.set_title(title, fontsize=14, fontweight='bold')
-#     ax.set_xlabel('East (Y) [m]', fontsize=12)
-#     ax.set_ylabel('North (X) [m]', fontsize=12)
-#     ax.grid(True, linestyle='--', alpha=0.7)
-#     ax.legend()
-#     plt.tight_layout()
-#     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-#     plt.close(fig)
-
 def plot_state_variables(t_list, states_list, labels, colors, title, save_path):
     """Plots x, y, z, vx, vy, vz for comparison or single flight."""
     fig, axes = plt.subplots(3, 2, figsize=(14, 12))
@@ -340,8 +312,9 @@ def main():
     # run_visualization_pipeline("sitl_logs", is_sitl=True)
     
     # 2. Process Real Flight Logs (Update folder name as needed)
-    #run_visualization_pipeline("260424_flight_logs", is_sitl=False)
-    run_visualization_pipeline("260501_flight_logs_old", is_sitl=False)
+    run_visualization_pipeline("260417_flight_logs", is_sitl=False)
+    # run_visualization_pipeline("260424_flight_logs", is_sitl=False)
+    # run_visualization_pipeline("260501_flight_logs_old", is_sitl=False)
 
     print("\n[Success] All visualizations generated in 'results_svm_figs/' directory.")
 

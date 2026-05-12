@@ -57,65 +57,72 @@ def plot_classification_results(X_train_scaled, X_test_scaled, y_train, y_test, 
     save_dir = "data/figure"
     os.makedirs(save_dir, exist_ok=True)
 
-    # 1. Plot Confusion Matrix (Uncommented to fix NameError)
+    # Class-to-Color & Label Mapping (Consistent with your visualization standards)
+    class_colors = {0: 'tab:green', 1: 'tab:orange', 2: 'tab:blue'}
+    label_map = {0: "PX4", 1: "ArduPilot", 2: "Cogni"}
+
+    # 1. Plot Confusion Matrix
     cm = confusion_matrix(y_test, y_pred)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=target_names)
     
-    fig, ax = plt.subplots(figsize=(6, 5))
-    disp.plot(cmap=plt.cm.Blues, ax=ax)
-    plt.title("SVM Classification Confusion Matrix", fontweight='bold')
+    fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+    disp.plot(cmap=plt.cm.Blues, ax=ax_cm)
+    ax_cm.set_title("SVM Classification Confusion Matrix", fontweight='bold')
     plt.tight_layout()
     plt.savefig(f"{save_dir}/svm_confusion_matrix.png", dpi=150)
     plt.close()
-    print(f"[Info] Saved Confusion Matrix plot to '{save_dir}/svm_confusion_matrix.png'")
 
-    # 2. PCA 2D Scatter Plot (Reduce 48 dimensions to 2)
+    # 2. PCA 2D Scatter Plot
     pca = PCA(n_components=2)
     X_train_pca = pca.fit_transform(X_train_scaled)
     X_test_pca = pca.transform(X_test_scaled)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(11, 7))
     
-    # Plot SITL Train Data (Circles)
-    scatter_train = ax.scatter(X_train_pca[:, 0], X_train_pca[:, 1], c=y_train, 
-                               cmap='coolwarm', alpha=0.3, marker='o', label='Train Data (SITL)')
-    
-    # Plot SITL Test Data (Circles with thick edges)
-    scatter_test = ax.scatter(X_test_pca[:, 0], X_test_pca[:, 1], c=y_test, 
-                              cmap='coolwarm', alpha=1.0, marker='o', s=100, edgecolor='k', label='Test Data (SITL)')
+    # SITL Data: Use discrete colors instead of coolwarm for consistency
+    for cls in [0, 1]:
+        mask_train = (y_train == cls)
+        ax.scatter(X_train_pca[mask_train, 0], X_train_pca[mask_train, 1], 
+                   c=class_colors[cls], alpha=0.15, marker='o', label=f'SITL {label_map[cls]} (Train)')
+        
+        mask_test = (y_test == cls)
+        ax.scatter(X_test_pca[mask_test, 0], X_test_pca[mask_test, 1], 
+                   c=class_colors[cls], alpha=0.6, marker='o', s=80, edgecolor='k', label=f'SITL {label_map[cls]} (Test)')
 
-    custom_lines = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor=scatter_train.cmap(0.0), markersize=10, label=f"SITL: {target_names[0]}"),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor=scatter_train.cmap(1.0), markersize=10, label=f"SITL: {target_names[1]}")
-    ]
-
-    # Visualize Real Flight Data (Mark correct/incorrect predictions)
+    # Real Flight Data: Firmware = Color / Accuracy = Shape
     if X_real_scaled is not None and len(X_real_scaled) > 0 and y_real is not None and y_real_pred is not None:
         X_real_pca = pca.transform(X_real_scaled)
-        
         y_real_array = np.array(y_real)
-        correct_mask = (y_real_array == y_real_pred)
-        incorrect_mask = (y_real_array != y_real_pred)
+        
+        for cls in [0, 1, 2]:
+            cls_mask = (y_real_array == cls)
+            if not np.any(cls_mask): continue
+            
+            # Correct Prediction: Star (*) with the firmware's unique color
+            correct_mask = cls_mask & (y_real_array == y_real_pred)
+            if np.any(correct_mask):
+                ax.scatter(X_real_pca[correct_mask, 0], X_real_pca[correct_mask, 1], 
+                           c=class_colors[cls], marker='*', s=350, edgecolor='k', linewidths=0.8,
+                           zorder=5, label=f'Real {label_map[cls]} (Match)')
+            
+            # Incorrect Prediction: Cross (X) with the firmware's color and red edge
+            incorrect_mask = cls_mask & (y_real_array != y_real_pred)
+            if np.any(incorrect_mask):
+                ax.scatter(X_real_pca[incorrect_mask, 0], X_real_pca[incorrect_mask, 1], 
+                           c=class_colors[cls], marker='X', s=200, edgecolor='red', linewidths=1.5,
+                           zorder=6, label=f'Real {label_map[cls]} (Fail)')
 
-        if np.any(correct_mask):
-            ax.scatter(X_real_pca[correct_mask, 0], X_real_pca[correct_mask, 1], 
-                       c='gold', marker='*', s=300, edgecolor='k', linewidths=1.5, zorder=5)
-            custom_lines.append(Line2D([0], [0], marker='*', color='w', markerfacecolor='gold', markeredgecolor='k', markersize=15, label='Real Flight (Correct)'))
-
-        if np.any(incorrect_mask):
-            ax.scatter(X_real_pca[incorrect_mask, 0], X_real_pca[incorrect_mask, 1], 
-                       c='red', marker='X', s=200, edgecolor='white', linewidths=1.5, zorder=5)
-            custom_lines.append(Line2D([0], [0], marker='X', color='w', markerfacecolor='red', markeredgecolor='w', markersize=12, label='Real Flight (Incorrect)'))
-
-    ax.set_title("PCA 2D Projection of DWT Features", fontsize=14, fontweight='bold')
+    ax.set_title("PCA 2D Projection of DWT Features", fontsize=15, fontweight='bold')
     ax.set_xlabel(f"Principal Component 1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
     ax.set_ylabel(f"Principal Component 2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
 
-    ax.legend(handles=custom_lines, loc='best')
-
+    # Legend handling: Placed outside to keep the plot clean
+    # ax.legend(handles=custom_lines, loc='best')
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=10, frameon=True)
     ax.grid(True, linestyle='--', alpha=0.6)
+    
     plt.tight_layout()
-    plt.savefig(f"{save_dir}/svm_pca_scatter.png", dpi=150)
+    plt.savefig(f"{save_dir}/svm_pca_scatter.png", dpi=150, bbox_inches='tight')
     plt.close()
     print(f"[Info] Saved PCA Scatter plot to '{save_dir}/svm_pca_scatter.png'")
 
@@ -134,8 +141,8 @@ def main():
         print(f"[Success] SITL DWT Feature Matrix Shape: {X_sitl_dwt.shape}")
     else:
         # 1. Load SITL Data (SITL uses 'raw' paths by default)
-        X_px4_sitl, y_px4_sitl = load_px4_dataset("sitl_logs")
-        X_ardu_sitl, y_ardu_sitl = load_ardu_dataset("sitl_logs", data_type='raw')
+        X_px4_sitl, y_px4_sitl, _ = load_px4_dataset("sitl_logs")
+        X_ardu_sitl, y_ardu_sitl, _ = load_ardu_dataset("sitl_logs", data_type='raw')
         
         X_sitl_ts = X_px4_sitl + X_ardu_sitl
         y_sitl = np.concatenate((y_px4_sitl, y_ardu_sitl))
@@ -183,33 +190,37 @@ def main():
     test_folders = ["260501_flight_logs_old"]
     X_real_ts = []
     y_real = []
+    runs_real = []
 
     for folder in test_folders:
         print(f"\n[Processing Folder] {folder}")
         
         # 0. Load PX4 real data (labeled as Class 0)
         print(f" Loading PX4 real flight data from '{folder}'...")
-        X_px4_real, y_px4_real = load_px4_dataset(folder, data_type='processed', measurement_type='mocap')
+        X_px4_real, y_px4_real, runs_px4 = load_px4_dataset(folder, data_type='processed', measurement_type='mocap')
         print(f"  --> PX4 Subtotal for {folder}: {len(X_px4_real)} segments.")
         if len(X_px4_real) > 0:
             X_real_ts.extend(X_px4_real)
             y_real.extend(y_px4_real)
+            runs_real.extend(runs_px4)
             
         # 1. Load ArduPilot real data (labeled as Class 1)
         print(f" Loading ArduPilot real flight data from '{folder}'...")
-        X_ardu_real, y_ardu_real = load_ardu_dataset(folder, data_type='processed', measurement_type='mocap')
+        X_ardu_real, y_ardu_real, runs_ardu = load_ardu_dataset(folder, data_type='processed', measurement_type='mocap')
         print(f"  --> ArduPilot Subtotal for {folder}: {len(X_ardu_real)} segments.")
         if len(X_ardu_real) > 0:
             X_real_ts.extend(X_ardu_real)
             y_real.extend(y_ardu_real)
-            
+            runs_real.extend(runs_ardu)
+
         # 2. Load Cogni real data (labeled as Class 2)
         print(f" Loading Cogni real flight data from '{folder}'...")
-        X_cogni_real, y_cogni_real = load_cogni_dataset(folder, data_type='processed', measurement_type='mocap')
+        X_cogni_real, y_cogni_real, runs_cogni = load_cogni_dataset(folder, data_type='processed', measurement_type='mocap')
         print(f"  --> Cogni Subtotal for {folder}: {len(X_cogni_real)} segments.")
         if len(X_cogni_real) > 0:
             X_real_ts.extend(X_cogni_real)
             y_real.extend(y_cogni_real)
+            runs_real.extend(runs_cogni)
 
         # 3. 폴더별 총합 출력
         folder_total = len(X_px4_real) + len(X_ardu_real) + len(X_cogni_real)
@@ -236,6 +247,7 @@ def main():
         # Keep only valid data without NaNs
         X_real_dwt = X_real_dwt[valid_indices]
         y_real = np.array(y_real)[valid_indices]
+        runs_real = np.array(runs_real)[valid_indices]
         
         if len(X_real_dwt) == 0:
             print("[Error] No valid real flight data left after removing NaNs.")
@@ -250,17 +262,18 @@ def main():
         
         # Print detailed per-segment matching report
         print("\n[Detailed Prediction Map]")
-        print("-" * 65)
-        print(f"{'No.':<4} | {'True Label':<12} | {'Prediction':<12} | {'Status'}")
-        print("-" * 65)
+        print("-" * 75)
+        print(f"{'No.':<4} | {'Run Folder':<12} | {'True Label':<12} | {'Prediction':<12} | {'Status'}")
+        print("-" * 75)
         
         label_map = {0: "PX4", 1: "ArduPilot", 2: "Cogni"}
         for i in range(len(y_real)):
+            run_name = runs_real[i]
             true_name = label_map.get(y_real[i], "Unknown")
             pred_name = label_map.get(y_real_pred[i], "Unknown")
             status = "Match" if true_name == pred_name else "Fail"
-            print(f"{i+1:<4} | {true_name:<12} | {pred_name:<12} | {status}")
-        print("-" * 65)
+            print(f"{i+1:<4} | {run_name:<12} | {true_name:<12} | {pred_name:<12} | {status}")
+        print("-" * 75)
         
         # Standard classification report
         print("\n[Classification Report]")
