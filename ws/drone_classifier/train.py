@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from model import DroneTrajectoryCNN, DroneTrajectoryCNNLSTM
+from model import DroneTrajectoryCNN, DroneTrajectoryCNNLSTM, DroneTrajectorMLP
 from dataset import build_training_pipeline 
 import sys
 from datetime import datetime
@@ -14,7 +14,7 @@ ARDU_FOLDER = "../../data/ardu_logs"
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
 NUM_EPOCHS = 30
-WINDOW_SIZE = 100
+WINDOW_SIZE = 25 #0.5 seconds at 50Hz
 STEP_SIZE = 50
 
 def main(model_type="cnn"):
@@ -26,30 +26,42 @@ def main(model_type="cnn"):
     """
     # Generate timestamp for model filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    robust_stats_path = f"robust_stats_{timestamp}.json"
     
     print(f"\n{'='*70}")
     print(f"Training {model_type.upper()} Model")
     print(f"{'='*70}\n")
     
+    use_relative = (model_type.lower() == "mlp")
+    # Camera/mocap noise range: 5–20 mm.  Applied only during MLP training to
+    # bridge the SITL→real-flight domain gap via position noise augmentation.
+    noise_std = 0.005 if use_relative else 0.0
+
     train_loader, test_loader = build_training_pipeline(
-        px4_dir=PX4_FOLDER, 
-        ardu_dir=ARDU_FOLDER, 
-        batch_size=BATCH_SIZE, 
+        px4_dir=PX4_FOLDER,
+        ardu_dir=ARDU_FOLDER,
+        batch_size=BATCH_SIZE,
         test_ratio=0.2,
         window_size=WINDOW_SIZE,
-        step_size=STEP_SIZE
+        step_size=STEP_SIZE,
+        robust_stats_path=robust_stats_path,
+        use_relative_features=use_relative,
+        pos_noise_std=noise_std,
     )
 
     # Model selection
     if model_type.lower() == "cnn":
-        model = DroneTrajectoryCNN(num_features=10)
+        model = DroneTrajectoryCNN(num_features=7)
         model_name = "Pure CNN"
     elif model_type.lower() == "cnn_lstm":
-        model = DroneTrajectoryCNNLSTM(num_features=10, lstm_hidden_size=32, num_lstm_layers=1)
+        model = DroneTrajectoryCNNLSTM(num_features=7, lstm_hidden_size=32, num_lstm_layers=1)
         model_name = "CNN-LSTM Hybrid"
+    elif model_type.lower() == "mlp":
+        model = DroneTrajectorMLP(num_features=7)
+        model_name = "MLP (relative features)"
     else:
         print(f"Unknown model type: {model_type}")
-        print("Available options: 'cnn', 'cnn_lstm'")
+        print("Available options: 'cnn', 'cnn_lstm', 'mlp'")
         return
     
     print(f"Model: {model_name}")
@@ -143,6 +155,7 @@ def main(model_type="cnn"):
     model_filename = f"drone_{model_type}_{timestamp}.pth"
     print(f"\n Training Complete - Best Test Accuracy: {best_test_acc:.1f}%")
     print(f"Weight saved to '{model_filename}'")
+    print(f"Robust scaler stats saved to '{robust_stats_path}'")
 
 if __name__ == "__main__":
     # Default: Pure CNN

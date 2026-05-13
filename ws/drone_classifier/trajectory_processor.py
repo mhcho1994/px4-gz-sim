@@ -9,6 +9,7 @@ What this script does:
 """
 from pathlib import Path
 import numpy as np
+import json
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from pyulog import ULog
@@ -42,26 +43,82 @@ def _safe_savgol(signal, window_length=21, poly_order=5):
     return savgol_filter(signal, window_length=wl, polyorder=poly_order)
 
 
+ROBUST_SCALE_FEATURE_INDICES = tuple(range(7))
+
+
+def fit_robust_feature_scaler(feature_arrays, feature_indices=ROBUST_SCALE_FEATURE_INDICES):
+    """
+    Fit robust scaling stats on SITL training features only.
+
+    Real camera odometry must use transform_robust_features with these saved
+    stats; do not fit on real/test data.
+    """
+    valid_arrays = [features for features in feature_arrays if features is not None and len(features) > 0]
+    if len(valid_arrays) == 0:
+        raise ValueError("Cannot fit robust scaler without feature data.")
+
+    all_features = np.vstack(valid_arrays)
+    indices = np.array(feature_indices, dtype=int)
+    selected = all_features[:, indices]
+
+    center = np.nanmedian(selected, axis=0)
+    q1 = np.nanpercentile(selected, 25, axis=0)
+    q3 = np.nanpercentile(selected, 75, axis=0)
+    scale = q3 - q1
+    scale[~np.isfinite(scale) | (scale == 0)] = 1.0
+
+    return {
+        "feature_indices": indices.tolist(),
+        "center": center.tolist(),
+        "scale": scale.tolist(),
+    }
+
+
+def transform_robust_features(features, stats, use_signed_log=True):
+    """Apply pre-fitted robust scaling stats without fitting."""
+    if features is None:
+        return None
+
+    transformed = features.copy()
+    indices = np.array(stats["feature_indices"], dtype=int)
+    center = np.array(stats["center"], dtype=float)
+    scale = np.array(stats["scale"], dtype=float)
+    transformed[:, indices] = (transformed[:, indices] - center) / scale
+
+    if use_signed_log:
+        transformed[:, indices] = np.sign(transformed[:, indices]) * np.log1p(np.abs(transformed[:, indices]))
+
+    return transformed
+
+
+def save_robust_feature_scaler(stats, path):
+    with open(path, "w") as f:
+        json.dump(stats, f, indent=2)
+
+
+def load_robust_feature_scaler(path):
+    with open(path, "r") as f:
+        return json.load(f)
+
+
 # =====================================================================
 # FEATURE EXTRACTION
 # =====================================================================
 def feature_names():
     return [
-        "Altitude (m)",
-        "Heading (rad)",
         "Upward Velocity (m/s)",
         "In-Plane Speed (m/s)",
         "Upward Acceleration (m/s²)",
-        "In-Plane Accel Norm (m/s²)",
-        "Upward Jerk (m/s³)",
-        "In-Plane Jerk Norm (m/s³)",
         "Curvature (1/m)",
         "Yaw Rate (rad/s)",
+        "Yaw Angular Accel (rad/s²)",
+        "Speed x Curvature (1/s)",
     ]
 
-def resample_and_extract_features(t, 
-                   x, y, z,  *, 
-                   target_hz=50, smooth_window=21, poly_order=5):
+def resample_and_extract_features(t,
+                   x, y, z, *,
+                   target_hz=50, smooth_window=21, poly_order=5,
+                   pos_noise_std=0.0):
     """
     Extract uniformly resampled trajectory data.
     Compute kinematic features such as altitude, heading, speed, 
@@ -70,16 +127,13 @@ def resample_and_extract_features(t,
 
     Feature columns
     ---------------
-    0 : altitude
-    1 : heading
-    2 : vertical velocity
-    3 : horizontal speed
-    4 : vertical acceleration
-    5 : horizontal acceleration norm
-    6 : vertical jerk
-    7 : horizontal jerk norm
-    8 : curvature
-    9 : yaw rate
+    0 : vertical velocity
+    1 : horizontal speed
+    2 : vertical acceleration
+    3 : curvature
+    4 : yaw rate
+    5 : yaw angular acceleration  (d(yaw_rate)/dt — PX4 jerk-limit signature)
+    6 : speed × curvature         (turn coordination proxy)
 
     Notes
     -----
@@ -106,11 +160,15 @@ def resample_and_extract_features(t,
     x_resampled = interp1d(t, x, bounds_error=True, fill_value=(x[0], x[-1]))(t_resampled)
     y_resampled = interp1d(t, y, bounds_error=True, fill_value=(y[0], y[-1]))(t_resampled)
     z_resampled = interp1d(t, z, bounds_error=True, fill_value=(z[0], z[-1]))(t_resampled)
-    
-    # vx_resampled = interp1d(t, vx, bounds_error=True, fill_value=(vx[0], vx[-1]))(t_resampled)
-    # vy_resampled = interp1d(t, vy, bounds_error=True, fill_value=(vy[0], vy[-1]))(t_resampled)
-    # vz_resampled = interp1d(t, vz, bounds_error=True, fill_value=(vz[0], vz[-1]))(t_resampled)
-    
+
+    # Inject Gaussian position noise before smoothing to simulate camera/mocap odometry.
+    # The SG filter suppresses high-freq components but preserves the elevated
+    # derivative variance that characterises real sensor data.
+    if pos_noise_std > 0.0:
+        x_resampled += np.random.normal(0.0, pos_noise_std, x_resampled.shape)
+        y_resampled += np.random.normal(0.0, pos_noise_std, y_resampled.shape)
+        z_resampled += np.random.normal(0.0, pos_noise_std, z_resampled.shape)
+
     x_smooth = _safe_savgol(x_resampled, window_length=smooth_window, poly_order=poly_order)
     y_smooth = _safe_savgol(y_resampled, window_length=smooth_window, poly_order=poly_order)
     z_smooth = _safe_savgol(z_resampled, window_length=smooth_window, poly_order=poly_order)
@@ -163,6 +221,9 @@ def resample_and_extract_features(t,
     yaw_rate = np.gradient(heading, dt)
     yaw_rate_smooth = _safe_savgol(yaw_rate, window_length=smooth_window, poly_order=poly_order)
 
+    yaw_angular_accel = np.gradient(yaw_rate_smooth, dt)
+    yaw_angular_accel_smooth = _safe_savgol(yaw_angular_accel, window_length=smooth_window, poly_order=poly_order)
+
     v_vec_3d = np.vstack((vx_smooth, vy_smooth, vz_smooth)).T
     a_vec_3d = np.vstack((ax, ay, az)).T
     cross_va = np.cross(v_vec_3d, a_vec_3d)
@@ -174,6 +235,8 @@ def resample_and_extract_features(t,
     # Additional gating for low-speed robustness
     curvature[speed_xy < 0.5] = 0.0
     curvature_smooth = _safe_savgol(curvature, window_length=smooth_window, poly_order=poly_order)
+
+    speed_curvature = speed_xy * curvature_smooth
 
     resampled_traj = np.vstack(
         (
@@ -188,16 +251,13 @@ def resample_and_extract_features(t,
 
     features = np.vstack(
         (
-            h_smooth,
-            heading,
             vh_smooth,
             speed_xy,
             ah,
-            acc_norm_xy,
-            j_alt,
-            jerk_norm_xy,
             curvature_smooth,
             yaw_rate_smooth,
+            yaw_angular_accel_smooth,
+            speed_curvature,
         )
     ).T
 
@@ -240,7 +300,7 @@ def resample_and_extract_features(t,
 # =====================================================================
 # PROCESSING TRAJECTORY DATA
 # =====================================================================
-def process_px4_flight_data(ulog_path, *, target_hz=50, t_attention=1.0, size_threshold = 10):
+def process_px4_flight_data(ulog_path, *, target_hz=50, t_attention=1.0, size_threshold=10, pos_noise_std=0.0):
     try:
         # Read .ulg file
         ulog = ULog(ulog_path)
@@ -258,39 +318,27 @@ def process_px4_flight_data(ulog_path, *, target_hz=50, t_attention=1.0, size_th
 
         # Compute features
         t_resampled, traj_resampled, feat_extracted = \
-        resample_and_extract_features(t_raw, x_raw, y_raw, z_raw, target_hz=target_hz, smooth_window=target_hz*t_attention+1, poly_order=5)
-        # resample_and_extract_features(t_raw, x_raw, y_raw, z_raw, vx_raw, vy_raw, vz_raw, target_hz=target_hz, smooth_window=target_hz*t_attention+1, poly_order=5)
-        
-        # Extract segments and spans
-        # segments, spans = extract_flight_segments(t_resampled, feat_extracted)
+        resample_and_extract_features(t_raw, x_raw, y_raw, z_raw, target_hz=target_hz, smooth_window=target_hz*t_attention+1, poly_order=5, pos_noise_std=pos_noise_std)
+
         segments = []
         spans = []
-        
-        # Return raw and processed data
-        traj_raw = np.vstack(
-            (
-                x_raw,
-                y_raw,
-                z_raw,
-                vx_raw,
-                vy_raw,
-                vz_raw,
-            )
-        ).T
+
+        traj_raw = np.vstack((x_raw, y_raw, z_raw, vx_raw, vy_raw, vz_raw)).T
         return t_raw, traj_raw, t_resampled, traj_resampled, feat_extracted, segments, spans
-        
+
     except Exception as e:
         print(f"[PX4 Extract Error] {ulog_path}: {e}")
         return None, None, None, None, None, None, None
 
-def process_ardu_flight_data(bin_path, *, target_hz=50, t_attention=1.0, size_threshold = 10):
+def process_ardu_flight_data(bin_path, *, target_hz=50, t_attention=1.0, size_threshold=10, pos_noise_std=0.0):
     try:
-        # Read .BIN file
+        # Read .BIN file — use EKF estimated position (XKF1/NKF1) instead of
+        # simulator ground truth (SIM2) to match real-flight odometry noise characteristics.
         mlog = mavutil.mavlink_connection(bin_path)
         t_raw, x_raw, y_raw, z_raw, vx_raw, vy_raw, vz_raw = [], [], [], [], [], [], []
-        
+
         while True:
-            msg = mlog.recv_match(type='SIM2', blocking=False)
+            msg = mlog.recv_match(type=['XKF1', 'NKF1'], blocking=False)
             if not msg: break
             t_raw.append(msg.TimeUS / 1e6)
             x_raw.append(msg.PN); y_raw.append(msg.PE); z_raw.append(msg.PD)
@@ -303,37 +351,42 @@ def process_ardu_flight_data(bin_path, *, target_hz=50, t_attention=1.0, size_th
 
         # Compute features
         t_resampled, traj_resampled, feat_extracted = \
-        resample_and_extract_features(t_raw, x_raw, y_raw, z_raw, target_hz=target_hz, smooth_window=target_hz*t_attention+1, poly_order=5)
-        # resample_and_extract_features(t_raw, x_raw, y_raw, z_raw, vx_raw, vy_raw, vz_raw, target_hz=target_hz, smooth_window=target_hz*t_attention+1, poly_order=5)
+        resample_and_extract_features(t_raw, x_raw, y_raw, z_raw, target_hz=target_hz, smooth_window=target_hz*t_attention+1, poly_order=5, pos_noise_std=pos_noise_std)
 
-        # Extract segments and spans
-        # segments, spans = extract_flight_segments(t_resampled, feat_extracted)
         segments = []
         spans = []
 
-        # Return raw and processed data
-        traj_raw = np.vstack(
-            (
-                x_raw,
-                y_raw,
-                z_raw,
-                vx_raw,
-                vy_raw,
-                vz_raw,
-            )
-        ).T
+        traj_raw = np.vstack((x_raw, y_raw, z_raw, vx_raw, vy_raw, vz_raw)).T
         return t_raw, traj_raw, t_resampled, traj_resampled, feat_extracted, segments, spans
-        
+
     except Exception as e:
         print(f"[ArduPilot Extract Error] {bin_path}: {e}")
         return None, None, None, None, None, None, None
 
-def process_rosbag_flight_data(csv_path, target_hz=50, t_attention=1.0, size_threshold = 10):
+def _contiguous_true_spans(mask, min_len):
+    spans = []
+    start = None
+
+    for idx, is_valid in enumerate(mask):
+        if is_valid and start is None:
+            start = idx
+        elif not is_valid and start is not None:
+            if idx - start > min_len:
+                spans.append((start, idx))
+            start = None
+
+    if start is not None and len(mask) - start > min_len:
+        spans.append((start, len(mask)))
+
+    return spans
+
+
+def process_rosbag_flight_data(csv_path, target_hz=50, t_attention=1.0, size_threshold=10):
     try:
         import pandas as pd
 
         print(f"[ROS CSV] Reading: {csv_path}")
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, skip_blank_lines=False)
         cols = df.columns.tolist()
         cols_lower = {c.lower(): c for c in cols}
 
@@ -343,17 +396,19 @@ def process_rosbag_flight_data(csv_path, target_hz=50, t_attention=1.0, size_thr
         if all(k in cols_lower for k in ('x', 'y', 'z')):
             x_col, y_col, z_col = cols_lower['x'], cols_lower['y'], cols_lower['z']
             print(f"[DEBUG] Using columns: {x_col}, {y_col}, {z_col}")
+        # elif all(k in cols_lower for k in ('xsmooth', 'ysmooth', 'zsmooth')):
+        #     x_col, y_col, z_col = cols_lower['xsmooth'], cols_lower['ysmooth'], cols_lower['zsmooth']
+            print(f"[DEBUG] Using columns: {x_col}, {y_col}, {z_col}")
+        elif all(k in cols_lower for k in ('x_smooth', 'y_smooth', 'z_smooth')):
+            x_col, y_col, z_col = cols_lower['x_smooth'], cols_lower['y_smooth'], cols_lower['z_smooth']
+            print(f"[DEBUG] Using columns: {x_col}, {y_col}, {z_col}")
         elif all(k in cols_lower for k in ('gtx', 'gty', 'gtz')):
             x_col, y_col, z_col = cols_lower['gtx'], cols_lower['gty'], cols_lower['gtz']
             print(f"[DEBUG] Using columns: {x_col}, {y_col}, {z_col}")
         else:
             print(f"[ROS Bag Extract Error] {csv_path}: required position columns not found (need x,y,z or gtx,gty,gtz). Available: {cols}")
             print(f"[DEBUG] cols_lower keys: {list(cols_lower.keys())}")
-            return None, None, None, None, None, None, None
-
-        x = df[x_col].astype(float).values
-        y = df[y_col].astype(float).values
-        z = df[z_col].astype(float).values
+            return []
 
         # Timestamp detection
         time_candidates = ['timestamp', 'time', 't', 'secs', 'sec', 'bag_time_ns', 'stamp', 'ros_time']
@@ -369,43 +424,73 @@ def process_rosbag_flight_data(csv_path, target_hz=50, t_attention=1.0, size_thr
                     break
         if time_col is None:
             print(f"[ROS Bag Extract Error] {csv_path}: no time column found")
-            return None, None, None, None, None, None, None
+            return []
 
-        t_loc = df[time_col].astype(float).values
+        t_loc = pd.to_numeric(df[time_col], errors='coerce').values
         if 'ns' in time_col.lower() or (np.nanmax(np.abs(t_loc)) > 1e12):
             t_loc = t_loc / 1e9
 
+        x = pd.to_numeric(df[x_col], errors='coerce').values
+        y = pd.to_numeric(df[y_col], errors='coerce').values
+        z = pd.to_numeric(df[z_col], errors='coerce').values
 
-        if len(t_loc) <= size_threshold:
-            print(f"[ROS Bag Extract Error] {csv_path}: not enough samples ({len(t_loc)} <= {size_threshold})")
-            return None, None, None, None, None, None, None
+        valid_mask = np.isfinite(t_loc) & np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+        valid_spans = _contiguous_true_spans(valid_mask, size_threshold)
 
-        print(f"[OK] Loaded {len(t_loc)} samples")
-        print(f"     x: {x.min():.3f}~{x.max():.3f}, y: {y.min():.3f}~{y.max():.3f}, z: {z.min():.3f}~{z.max():.3f}")
+        if len(valid_spans) == 0:
+            print(f"[ROS Bag Extract Error] {csv_path}: no valid continuous segment found")
+            return []
 
-        # Feature extraction
-        result = resample_and_extract_features(
-            t_loc, x, y, z,
-            target_hz=target_hz,
-            smooth_window=int(target_hz * t_attention) + 1,
-            poly_order=5
-        )
-        if result is None:
-            print(f"[ROS Bag Extract Error] {csv_path}: feature extraction failed")
-            return None, None, None, None, None, None, None
+        missing_rows = len(valid_mask) - int(valid_mask.sum())
+        if missing_rows > 0:
+            print(f"[INFO] Found {missing_rows} missing rows; split into {len(valid_spans)} segment(s)")
 
-        t_resampled, traj_resampled, feat_extracted = result
-        traj_raw = np.vstack((x, y, z)).T
-        segments = []
-        spans = []
+        processed_segments = []
 
-        return t_loc, traj_raw, t_resampled, traj_resampled, feat_extracted, segments, spans
+        for segment_idx, (start, end) in enumerate(valid_spans):
+            t_seg = t_loc[start:end]
+            x_seg = x[start:end]
+            y_seg = y[start:end]
+            z_seg = z[start:end]
+
+            print(f"[OK] Segment {segment_idx}: rows {start}-{end - 1}, {len(t_seg)} samples")
+            print(f"     x: {x_seg.min():.3f}~{x_seg.max():.3f}, y: {y_seg.min():.3f}~{y_seg.max():.3f}, z: {z_seg.min():.3f}~{z_seg.max():.3f}")
+
+            result = resample_and_extract_features(
+                t_seg, x_seg, y_seg, z_seg,
+                target_hz=target_hz,
+                smooth_window=int(target_hz * t_attention) + 1,
+                poly_order=5
+            )
+            if result is None:
+                print(f"[ROS Bag Extract Error] {csv_path}: segment {segment_idx} feature extraction failed")
+                continue
+
+            t_resampled, traj_resampled, feat_extracted = result
+            traj_raw = np.vstack((x_seg, y_seg, z_seg)).T
+            spans = [(start, end - 1)]
+            data = (t_seg, traj_raw, t_resampled, traj_resampled, feat_extracted, [], spans)
+
+            processed_segments.append({
+                'segment_index': segment_idx,
+                'row_start': start,
+                'row_end': end - 1,
+                't_start': float(t_seg[0]),
+                't_end': float(t_seg[-1]),
+                'data': data,
+            })
+
+        return processed_segments
 
     except Exception as e:
         print(f"[ROS Bag Extract Error] {csv_path}: {e}")
         import traceback
         traceback.print_exc()
-        return None, None, None, None, None, None, None
+        return []
+
+
+process_rosbag_flight_segments = process_rosbag_flight_data
+
 
 
 def collect_all_runs_segment_dataframe(base_data_dir=Path("./data/sitl_logs"), target_hz=50.0, t_attention=1.0):
