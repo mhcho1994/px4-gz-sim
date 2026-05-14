@@ -416,13 +416,13 @@ class ArduPilotMissionRunner:
 
             result = msg.result
             if result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                print(f"[PX4] COMMAND_ACK OK: cmd={command_id}")
+                print(f"[ARDUPILOT] COMMAND_ACK OK: cmd={command_id}")
                 return True
 
-            print(f"[PX4] COMMAND_ACK FAILED: cmd={command_id}, result={result}")
+            print(f"[ARDUPILOT] COMMAND_ACK FAILED: cmd={command_id}, result={result}")
             return False
 
-        print(f"[PX4] COMMAND_ACK TIMEOUT: cmd={command_id}")
+        print(f"[ARDUPILOT] COMMAND_ACK TIMEOUT: cmd={command_id}")
         return False
 
     def _clear_mission(self, m, timeout: float = 5.0) -> bool:
@@ -533,8 +533,14 @@ class ArduPilotMissionRunner:
 
                 if mtype == "MISSION_ACK":
                     ack_type = req.type
-                    self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
-                    return ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED
+                    if ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                        if len(sent) < len(items):
+                            # stale ACK from a previous operation (e.g. mission clear); ignore
+                            continue
+                        self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
+                        return True
+                    print(f"[MISSION_UPLOAD] Failed MISSION_ACK: type={ack_type}, sent={len(sent)}/{len(items)}")
+                    return False
 
                     # ack_type = req.type
 
@@ -544,15 +550,13 @@ class ArduPilotMissionRunner:
                     # if ack_type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
                     #     print("[MISSION_UPLOAD] Mission accepted")
                     #     self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
-                    #     return True
 
-                    # print(
-                    #     f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
-                    #     f"type={ack_type}, sent={len(sent)}/{len(items)}"
-                    # )
-
-                    # if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                    #     return False
+                    print(
+                        f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
+                        f"type={ack_type}, sent={len(sent)}/{len(items)}"
+                    )
+                    if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                        return False
 
                     # # ACCEPTED가 너무 일찍 오면 stale ACK일 가능성이 있으므로 무시
                     # continue
@@ -1224,9 +1228,71 @@ class ArduPilotMissionRunner:
             if not ok:
                 raise RuntimeError("Mission upload failed")
 
-            # Switch to guided mode and arm
+            # Switch to guided mode and wait for confirmation
             self._set_status(MissionState.SETTING_GUIDED, "switching to GUIDED")
             self._set_mode(m, "GUIDED")
+
+            guided_id = m.mode_mapping().get("GUIDED")
+            t_mode = time.time()
+            while time.time() - t_mode < 10.0:
+                hb = m.recv_match(type="HEARTBEAT", blocking=True, timeout=1.0)
+                if hb is not None and hb.custom_mode == guided_id:
+                    print("[MODE] GUIDED confirmed")
+                    break
+            else:
+                raise RuntimeError("GUIDED mode not confirmed within 10s")
+
+            # Disable arming checks for SITL — position estimate may not
+            # converge fast enough in simulation to pass the default checks.
+            self._set_param(m, 'ARMING_CHECK', 0)
+
+            # Wait until EKF GPS fusion is active on both IMUs AND position
+            # variance is stable. ArduPilot's hardcoded arm-time check
+            # 'Need Position Estimate' fires even with ARMING_CHECK=0 until
+            # the EKF reports 'IMUx is using GPS' — that is the signal that
+            # GPS fusion is complete and position estimate is trustworthy.
+            VAR_THRESHOLD = 0.5
+            STABLE_S = 3.0
+            ekf_timeout = 90.0
+            gps_fusion_count = 0  # number of IMUs confirmed using GPS
+            stable_since = None
+            t_ekf = time.time()
+            while time.time() - t_ekf < ekf_timeout:
+                msg = m.recv_match(
+                    type=["EKF_STATUS_REPORT", "STATUSTEXT"],
+                    blocking=True,
+                    timeout=1.0,
+                )
+                if msg is None:
+                    continue
+
+                if msg.get_type() == "STATUSTEXT":
+                    text = self._decode_statustext(msg)
+                    if text:
+                        print(f"[EKF_WAIT] AP: {text}")
+                    if "is using gps" in text.lower():
+                        gps_fusion_count += 1
+                        print(f"[EKF_WAIT] GPS fusion active ({gps_fusion_count} IMU(s))")
+                    continue
+
+                if gps_fusion_count == 0:
+                    continue  # don't check variance until GPS fusion is active
+
+                variance = msg.pos_horiz_variance
+                now = time.time()
+                if variance < VAR_THRESHOLD:
+                    if stable_since is None:
+                        stable_since = now
+                        print(f"[EKF_WAIT] pos_horiz_variance={variance:.3f} — waiting {STABLE_S:.0f}s for stability")
+                    elif now - stable_since >= STABLE_S:
+                        print(f"[EKF_WAIT] position stable (variance={variance:.3f}), proceeding to arm")
+                        break
+                else:
+                    if stable_since is not None:
+                        print(f"[EKF_WAIT] variance spiked to {variance:.3f}, resetting")
+                    stable_since = None
+            else:
+                raise RuntimeError(f"EKF GPS fusion did not complete within {ekf_timeout:.0f}s")
 
             self._arm(m)
 

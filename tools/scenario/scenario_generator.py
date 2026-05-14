@@ -661,7 +661,7 @@ def main() -> int:
                 turn_deg = float(args.turn_deg)
 
             if args.alt_m == "random":
-                alt_m = float(np.random.uniform(5.0, 50.0))
+                alt_m = float(np.random.uniform(0.1, 3.0))
             else:                
                 alt_m = float(args.alt_m)  
 
@@ -702,13 +702,13 @@ def main() -> int:
             )
 
             alt_m = (
-                float(np.random.uniform(5.0, 50.0))
+                float(np.random.uniform(0.1, 3.0))
                 if args.alt_m == "random"
                 else float(args.alt_m)
             )
 
             speed_m_s = (
-                float(np.random.uniform(3.0, 12.0))
+                float(np.random.uniform(0.5, 3.0))
                 if args.speed_m_s == "random"
                 else float(args.speed_m_s)
             )

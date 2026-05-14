@@ -415,7 +415,7 @@ def _run_sitl_cmd(vehicle: str, frame: str, model: str, instance: int, gcs_outpo
         "-I", str(instance),
         f"--location={location}",
         f"--out=udp:127.0.0.1:{str(gcs_outport)}",
-        f"--out={mavlink_url}",
+        # f"--out={mavlink_url}",
     ]
 
 
@@ -840,7 +840,7 @@ def main() -> int:
     ap.add_argument("--run-root", type=Path, default=Path("./data/sitl_logs"), help="Root folder containing run_xxx/scenario.yaml and run_xxx/ardu_logs")
     ap.add_argument("--force", action="store_true", help="Re-run even if ardu_logs exists")
     ap.add_argument("--startup-delay-s", type=float, default=5.0)
-    ap.add_argument("--max-run-s", type=float, default=60.0)
+    ap.add_argument("--max-run-s", type=float, default=700.0)
     ap.add_argument("--max-retries", type=int, default=3, help="Number of retries for failed runs (0 for no retries)")
     ap.add_argument("--headless", action="store_true", help="Run Gazebo/QGC in headless mode (for batch SITL in CLI modes)")
     ap.add_argument("--verbose", action="store_true", help="Verbose logging of commands and environment variables")
