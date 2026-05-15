@@ -54,7 +54,7 @@ def extract_dwt_features(timeseries_matrix, waveletname='db4', level=3):
 # 4. Visualization Function
 # =====================================================================
 def plot_classification_results(X_train_scaled, X_test_scaled, y_train, y_test, y_pred, target_names, X_real_scaled=None, y_real=None, y_real_pred=None):
-    save_dir = "data/figure"
+    save_dir = "results/svm_figs"
     os.makedirs(save_dir, exist_ok=True)
 
     # Class-to-Color & Label Mapping (Consistent with your visualization standards)
