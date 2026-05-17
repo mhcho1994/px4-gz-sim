@@ -36,8 +36,16 @@ def resample_and_extract_features(t, x, y, z, vx, vy, vz, t_att, yaw_att, source
     """
     t_start = max(t[0], t_att[0])
     t_end = min(t[-1], t_att[-1])
-    
-    t_new = np.arange(t_start, t_end, DT)
+
+    duration = t_end - t_start
+    if duration <= 0:
+        return None
+
+    num_samples = int(np.floor(duration / DT))
+    if num_samples < 2:
+        return None
+
+    t_new = t_start + np.arange(num_samples) * DT
 
     # 선형 보간 (50Hz 리샘플링)
     x_new = interp1d(t, x)(t_new)

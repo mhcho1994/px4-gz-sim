@@ -1,8 +1,10 @@
 """
 Ensemble: DWT+LightGBM + Segment LightGBM.
 
+DWT feature extraction uses train_dwt_svm.extract_dwt_features (via train_dwt_lgbm wrapper).
+
 Combination modes (set MODE below):
-  "max"   — max(p_dwt, p_seg)          best when models complement each other
+  "max"      — max(p_dwt, p_seg)           best when models complement each other
   "weighted" — DWT_WEIGHT*p_dwt + (1-DWT_WEIGHT)*p_seg
   "dwtonly"  — p_dwt only
   "segonly"  — p_seg only
@@ -21,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from trajectory_processor import process_rosbag_flight_data
+# extract_dwt_features internally calls train_dwt_svm.extract_dwt_features with z-score
 from train_dwt_lgbm import extract_turns, extract_dwt_features
 from train_segment_lgbm import build_10col, segment_flight, segments_to_rows
 
@@ -71,9 +74,14 @@ def main():
     if len(sys.argv) == 4:
         dwt_path, seg_path, feat_path = sys.argv[1], sys.argv[2], sys.argv[3]
     else:
-        dwt_path  = auto_select("dwt_lgbm_*.pkl",        "DWT model")
-        seg_path  = auto_select("segment_lgbm_*.pkl",    "Segment model")
-        feat_path = auto_select("segment_features_*.json", "Segment features")
+        dwt_path  = auto_select("dwt_lgbm_*.pkl",               "DWT model")
+        # prefer hover-trained segment model if available
+        hover_models = sorted(glob.glob("segment_lgbm_hover_*.pkl"))
+        seg_path  = hover_models[-1] if hover_models else auto_select("segment_lgbm_*.pkl", "Segment model")
+        print(f"[AUTO] Segment model: {seg_path}")
+        hover_feats = sorted(glob.glob("segment_features_hover_*.json"))
+        feat_path = hover_feats[-1] if hover_feats else auto_select("segment_features_*.json", "Segment features")
+        print(f"[AUTO] Segment features: {feat_path}")
 
     print(f"\n{'='*70}")
     print(f"  Ensemble: DWT-LightGBM + Segment-LightGBM  (mode={MODE})")

@@ -4,7 +4,7 @@ Segment-based PX4 vs ArduPilot classifier.
 Pipeline:
   SITL logs → 7-col kinematic time series (drone_classifier processor)
             → adapt to 10-col format (add altitude from traj_resampled)
-            → adaptive flight segmentation (straight / turn / takeoff / landing)
+            → adaptive flight segmentation (straight / turn / takeoff / landing / hover)
             → extract per-segment scale-invariant ratio features
             → LightGBM (one row per segment)
 
@@ -18,6 +18,7 @@ Scale-invariant features used:
   - peak_yaw_rate_rel_idx       (where in segment yaw rate peaks)
   - integral_yaw_rate_per_path  (total rotation per unit distance)
   - heading_change_norm         (heading change per unit path)
+  + hover micro-oscillation features (yr_std/spd_std/valt_std ratios)
   + one-hot segment type
 """
 
@@ -109,7 +110,7 @@ def segment_flight(t, feat_10col, dt=0.02):
     min_valid_speed_heading = max(0.10, 0.40 * spd_ref)
 
     # ── takeoff / landing via altitude settling ──────────────────────────────
-    alt_95 = np.percentile(altitude, 95)
+    alt_95 = np.percentile(altitude, 50)
     target_alt = alt_95 - 0.1
 
     vz_small = max(0.05, 0.15 * spd_ref)
@@ -184,12 +185,29 @@ def segment_flight(t, feat_10col, dt=0.02):
     min_acc_len = max(1, int(0.4 / dt))
     long_acc_threshold = max(0.05, 0.3 * spd_ref)   # adaptive accel threshold
 
+    # hover: stationary in cruise phase (not moving, altitude stable)
+    min_hover_len = max(1, int(0.5 / dt))
+    valt_hover_thresh = max(0.03, 0.10 * spd_ref)
+    raw_hover = (~is_moving) & (np.abs(f[:, 2]) < valt_hover_thresh)
+    is_hover = _fill_short_false_gaps(raw_hover, merge_gap_len)
+    is_hover = _remove_short_true_runs(is_hover, min_hover_len)
+
     segs = {"straight": [], "straight_accel": [], "straight_decel": [],
-            "straight_const": [], "turn": [], "takeoff": None, "landing": None}
+            "straight_const": [], "turn": [], "hover": [],
+            "takeoff": None, "landing": None}
 
     for s, e in _mask_to_ranges(is_turn):
         segs["turn"].append({
             "label": "turn",
+            "t": tf[s:e], "speed_xy": spd_f[s:e],
+            "yaw_rate": yr_f[s:e], "curvature": curv_f[s:e],
+            "v_alt": f[s:e, 2], "a_long": a_long[s:e],
+            "heading": f[s:e, 1],
+        })
+
+    for s, e in _mask_to_ranges(is_hover):
+        segs["hover"].append({
+            "label": "hover",
             "t": tf[s:e], "speed_xy": spd_f[s:e],
             "yaw_rate": yr_f[s:e], "curvature": curv_f[s:e],
             "v_alt": f[s:e, 2], "a_long": a_long[s:e],
@@ -267,7 +285,7 @@ def segment_flight(t, feat_10col, dt=0.02):
 
 # ── scale-invariant ratio feature extraction ──────────────────────────────────
 SEG_TYPES = ["takeoff", "landing", "straight", "straight_accel",
-             "straight_decel", "straight_const", "turn"]
+             "straight_decel", "straight_const", "turn", "hover"]
 EPS = 1e-6
 
 def _ratio_features(seg) -> dict | None:
@@ -295,6 +313,8 @@ def _ratio_features(seg) -> dict | None:
 
     path_length = float(np.trapz(spd, t)) + EPS
 
+    is_hover_seg = (label == "hover")
+
     def cv(arr):
         m = float(np.mean(np.abs(arr))) + EPS
         return float(np.std(arr)) / m
@@ -303,40 +323,58 @@ def _ratio_features(seg) -> dict | None:
         if len(arr) == 0: return 0.5
         return float(np.argmax(np.abs(arr))) / max(len(arr) - 1, 1)
 
+    # hover-specific micro-oscillation features
+    # reference: yr_abs_mean (controller output, comparable across SITL/real)
+    yr_abs_mean  = float(np.mean(yr_abs)) + EPS
+    valt_std     = float(np.std(v_alt))
+    spd_std_val  = float(np.std(spd))
+    hover_spd_to_yr   = spd_std_val  / yr_abs_mean         # horizontal jitter per yaw activity
+    hover_valt_to_yr  = valt_std     / yr_abs_mean         # vertical jitter per yaw activity
+    hover_spd_to_valt = spd_std_val  / (valt_std + EPS)    # horizontal vs vertical balance
+    hover_yr_cv       = cv(yr)                             # yaw micro-oscillation regularity
+    hover_along_to_yr = float(np.mean(a_long_abs)) / yr_abs_mean  # surge corrections per yaw
+
     row = {
         # segment type
         "seg_type": label,
         **{f"is_{s}": int(label == s) for s in SEG_TYPES},
 
-        # core ratio features (scale-invariant)
-        "a_long_to_speed":     float(np.mean(a_long_abs)) / spd_mean,
-        "yaw_rate_to_speed":   float(np.mean(yr_abs))     / spd_mean,
-        "curvature_to_speed":  float(np.mean(curv_abs))   / spd_mean,
-        "v_alt_to_speed":      float(np.mean(v_alt_abs))  / spd_mean,
+        # core ratio features (scale-invariant; set to 0 for hover to avoid /~0 explosion)
+        "a_long_to_speed":     0.0 if is_hover_seg else float(np.mean(a_long_abs)) / spd_mean,
+        "yaw_rate_to_speed":   0.0 if is_hover_seg else float(np.mean(yr_abs))     / spd_mean,
+        "curvature_to_speed":  0.0 if is_hover_seg else float(np.mean(curv_abs))   / spd_mean,
+        "v_alt_to_speed":      0.0 if is_hover_seg else float(np.mean(v_alt_abs))  / spd_mean,
 
-        # coefficient of variation features
+        # coefficient of variation features (valid for all segments)
         "speed_cv":     spd_std / spd_mean,
         "yaw_rate_cv":  cv(yr_abs),
         "a_long_cv":    cv(a_long),
         "v_alt_cv":     cv(v_alt),
 
-        # normalized integrals (per unit path)
-        "integral_yr_per_path":    float(np.trapz(yr_abs,   t)) / path_length,
-        "integral_curv_per_path":  float(np.trapz(curv_abs, t)) / path_length,
-        "integral_along_per_path": float(np.trapz(a_long_abs, t)) / path_length,
+        # normalized integrals (per unit path; 0 for hover since path ≈ 0)
+        "integral_yr_per_path":    0.0 if is_hover_seg else float(np.trapz(yr_abs,   t)) / path_length,
+        "integral_curv_per_path":  0.0 if is_hover_seg else float(np.trapz(curv_abs, t)) / path_length,
+        "integral_along_per_path": 0.0 if is_hover_seg else float(np.trapz(a_long_abs, t)) / path_length,
 
         # temporal shape (where do peaks occur, 0–1)
         "peak_speed_rel":    rel_peak_idx(spd),
         "peak_yr_rel":       rel_peak_idx(yr_abs),
         "peak_along_rel":    rel_peak_idx(a_long_abs),
 
-        # heading change normalized
-        "heading_change_per_path": float(np.sum(np.abs(np.diff(seg["heading"])))) / path_length,
+        # heading change normalized (0 for hover)
+        "heading_change_per_path": 0.0 if is_hover_seg else float(np.sum(np.abs(np.diff(seg["heading"])))) / path_length,
 
         # peak-to-mean ratios
         "peak_to_mean_speed":  float(np.max(spd))          / spd_mean,
         "peak_to_mean_yr":     float(np.max(yr_abs + EPS)) / (float(np.mean(yr_abs)) + EPS),
         "peak_to_mean_along":  float(np.max(a_long_abs + EPS)) / (float(np.mean(a_long_abs)) + EPS),
+
+        # hover micro-oscillation features (0 for non-hover)
+        "hover_spd_to_yr":    hover_spd_to_yr   if is_hover_seg else 0.0,
+        "hover_valt_to_yr":   hover_valt_to_yr  if is_hover_seg else 0.0,
+        "hover_spd_to_valt":  hover_spd_to_valt if is_hover_seg else 0.0,
+        "hover_yr_cv":        hover_yr_cv        if is_hover_seg else 0.0,
+        "hover_along_to_yr":  hover_along_to_yr  if is_hover_seg else 0.0,
     }
     return row
 
@@ -394,11 +432,11 @@ def build_10col(traj_resampled, features_7col):
 
 def main():
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    model_out    = f"segment_lgbm_{ts}.pkl"
-    feat_cols_out = f"segment_features_{ts}.json"
+    model_out    = f"segment_lgbm_hover_{ts}.pkl"
+    feat_cols_out = f"segment_features_hover_{ts}.json"
 
     print(f"\n{'='*70}")
-    print(f"  Segment-based LightGBM Trainer  ({ts})")
+    print(f"  Segment-based LightGBM Trainer (+hover)  ({ts})")
     print(f"{'='*70}\n")
 
     # ── 1. load SITL data (raw features + resampled trajectory) ─────────────

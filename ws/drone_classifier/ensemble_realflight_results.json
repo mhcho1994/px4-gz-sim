@@ -1,0 +1,400 @@
+[
+  {
+    "file": "0417_ardupilot_00.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.017,
+    "ardu_prob_seg": 0.202,
+    "ardu_prob_final": 0.202,
+    "prediction": "PX4",
+    "n_turns": 3,
+    "n_segs": 4,
+    "per_turn_ardu_prob": [
+      0.002,
+      0.007,
+      0.044
+    ]
+  },
+  {
+    "file": "0417_ardupilot_00_raw.csv",
+    "segment": 1,
+    "ardu_prob_dwt": 0.019,
+    "ardu_prob_seg": 0.166,
+    "ardu_prob_final": 0.166,
+    "prediction": "PX4",
+    "n_turns": 3,
+    "n_segs": 4,
+    "per_turn_ardu_prob": [
+      0.002,
+      0.007,
+      0.049
+    ]
+  },
+  {
+    "file": "0417_ardupilot_01.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.209,
+    "ardu_prob_seg": 0.236,
+    "ardu_prob_final": 0.236,
+    "prediction": "PX4",
+    "n_turns": 5,
+    "n_segs": 8,
+    "per_turn_ardu_prob": [
+      0.001,
+      0.955,
+      0.008,
+      0.002,
+      0.083
+    ]
+  },
+  {
+    "file": "0417_ardupilot_01_raw.csv",
+    "segment": 1,
+    "ardu_prob_dwt": 0.219,
+    "ardu_prob_seg": 0.319,
+    "ardu_prob_final": 0.319,
+    "prediction": "PX4",
+    "n_turns": 5,
+    "n_segs": 5,
+    "per_turn_ardu_prob": [
+      0.0,
+      0.961,
+      0.004,
+      0.002,
+      0.126
+    ]
+  },
+  {
+    "file": "0417_ardupilot_02.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.08,
+    "ardu_prob_seg": 0.224,
+    "ardu_prob_final": 0.224,
+    "prediction": "PX4",
+    "n_turns": 6,
+    "n_segs": 4,
+    "per_turn_ardu_prob": [
+      0.005,
+      0.001,
+      0.003,
+      0.349,
+      0.114,
+      0.011
+    ]
+  },
+  {
+    "file": "0417_ardupilot_02_raw.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.036,
+    "ardu_prob_seg": 0.028,
+    "ardu_prob_final": 0.036,
+    "prediction": "PX4",
+    "n_turns": 6,
+    "n_segs": 4,
+    "per_turn_ardu_prob": [
+      0.001,
+      0.001,
+      0.008,
+      0.079,
+      0.114,
+      0.011
+    ]
+  },
+  {
+    "file": "0417_cognipilot_00.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.076,
+    "ardu_prob_seg": 0.312,
+    "ardu_prob_final": 0.312,
+    "prediction": "PX4",
+    "n_turns": 8,
+    "n_segs": 8,
+    "per_turn_ardu_prob": [
+      0.002,
+      0.002,
+      0.0,
+      0.001,
+      0.001,
+      0.596,
+      0.004,
+      0.003
+    ]
+  },
+  {
+    "file": "0417_cognipilot_01.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.143,
+    "ardu_prob_seg": 0.34,
+    "ardu_prob_final": 0.34,
+    "prediction": "PX4",
+    "n_turns": 23,
+    "n_segs": 17,
+    "per_turn_ardu_prob": [
+      0.009,
+      0.011,
+      0.003,
+      0.0,
+      0.043,
+      0.001,
+      0.004,
+      0.002,
+      0.002,
+      0.01,
+      0.009,
+      0.001,
+      0.003,
+      0.01,
+      0.008,
+      0.993,
+      0.005,
+      0.001,
+      0.984,
+      0.997,
+      0.0,
+      0.194,
+      0.005
+    ]
+  },
+  {
+    "file": "0417_cognipilot_02.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.081,
+    "ardu_prob_seg": 0.164,
+    "ardu_prob_final": 0.164,
+    "prediction": "PX4",
+    "n_turns": 38,
+    "n_segs": 28,
+    "per_turn_ardu_prob": [
+      0.016,
+      0.001,
+      0.99,
+      0.001,
+      0.001,
+      0.006,
+      0.002,
+      0.012,
+      0.004,
+      0.0,
+      0.212,
+      0.001,
+      0.001,
+      0.006,
+      0.001,
+      0.003,
+      0.236,
+      0.661,
+      0.001,
+      0.001,
+      0.228,
+      0.001,
+      0.001,
+      0.015,
+      0.005,
+      0.002,
+      0.001,
+      0.003,
+      0.0,
+      0.019,
+      0.01,
+      0.084,
+      0.502,
+      0.002,
+      0.0,
+      0.003,
+      0.001,
+      0.043
+    ]
+  },
+  {
+    "file": "0429_ardupilot_00_raw.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.138,
+    "ardu_prob_seg": 0.247,
+    "ardu_prob_final": 0.247,
+    "prediction": "PX4",
+    "n_turns": 4,
+    "n_segs": 5,
+    "per_turn_ardu_prob": [
+      0.001,
+      0.531,
+      0.019,
+      0.001
+    ]
+  },
+  {
+    "file": "0429_ardupilot_01_raw.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.154,
+    "ardu_prob_seg": 0.007,
+    "ardu_prob_final": 0.154,
+    "prediction": "PX4",
+    "n_turns": 3,
+    "n_segs": 2,
+    "per_turn_ardu_prob": [
+      0.002,
+      0.015,
+      0.447
+    ]
+  },
+  {
+    "file": "0429_ardupilot_01_raw.csv",
+    "segment": 1,
+    "ardu_prob_dwt": 0.065,
+    "ardu_prob_seg": 0.381,
+    "ardu_prob_final": 0.381,
+    "prediction": "PX4",
+    "n_turns": 1,
+    "n_segs": 2,
+    "per_turn_ardu_prob": [
+      0.065
+    ]
+  },
+  {
+    "file": "0429_ardupilot_01_raw.csv",
+    "segment": 2,
+    "ardu_prob_dwt": 0.006,
+    "ardu_prob_seg": null,
+    "ardu_prob_final": 0.006,
+    "prediction": "PX4",
+    "n_turns": 1,
+    "n_segs": 0,
+    "per_turn_ardu_prob": [
+      0.006
+    ]
+  },
+  {
+    "file": "0501_PX4_Processed_1.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.105,
+    "ardu_prob_seg": 0.201,
+    "ardu_prob_final": 0.201,
+    "prediction": "PX4",
+    "n_turns": 5,
+    "n_segs": 3,
+    "per_turn_ardu_prob": [
+      0.015,
+      0.0,
+      0.001,
+      0.005,
+      0.505
+    ]
+  },
+  {
+    "file": "0501_PX4_processed.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.013,
+    "ardu_prob_seg": 0.064,
+    "ardu_prob_final": 0.064,
+    "prediction": "PX4",
+    "n_turns": 5,
+    "n_segs": 3,
+    "per_turn_ardu_prob": [
+      0.001,
+      0.045,
+      0.001,
+      0.017,
+      0.002
+    ]
+  },
+  {
+    "file": "0501_ardu_processed_1.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.011,
+    "ardu_prob_seg": 0.472,
+    "ardu_prob_final": 0.472,
+    "prediction": "PX4",
+    "n_turns": 4,
+    "n_segs": 12,
+    "per_turn_ardu_prob": [
+      0.009,
+      0.011,
+      0.014,
+      0.011
+    ]
+  },
+  {
+    "file": "0501_ardu_processed_2.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.228,
+    "ardu_prob_seg": 0.269,
+    "ardu_prob_final": 0.269,
+    "prediction": "PX4",
+    "n_turns": 5,
+    "n_segs": 15,
+    "per_turn_ardu_prob": [
+      0.122,
+      0.169,
+      0.013,
+      0.001,
+      0.835
+    ]
+  },
+  {
+    "file": "0501_px4_processed_2.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.022,
+    "ardu_prob_seg": 0.324,
+    "ardu_prob_final": 0.324,
+    "prediction": "PX4",
+    "n_turns": 6,
+    "n_segs": 3,
+    "per_turn_ardu_prob": [
+      0.002,
+      0.002,
+      0.033,
+      0.065,
+      0.029,
+      0.001
+    ]
+  },
+  {
+    "file": "0501_px4_processed_3.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.125,
+    "ardu_prob_seg": 0.217,
+    "ardu_prob_final": 0.217,
+    "prediction": "PX4",
+    "n_turns": 7,
+    "n_segs": 5,
+    "per_turn_ardu_prob": [
+      0.009,
+      0.017,
+      0.001,
+      0.001,
+      0.242,
+      0.579,
+      0.025
+    ]
+  },
+  {
+    "file": "0501_px4_processed_4.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.062,
+    "ardu_prob_seg": 0.369,
+    "ardu_prob_final": 0.369,
+    "prediction": "PX4",
+    "n_turns": 5,
+    "n_segs": 12,
+    "per_turn_ardu_prob": [
+      0.011,
+      0.125,
+      0.153,
+      0.01,
+      0.01
+    ]
+  },
+  {
+    "file": "rosbag2_2026_03_25-18_12_10__ardupilot_odom.csv",
+    "segment": 0,
+    "ardu_prob_dwt": 0.055,
+    "ardu_prob_seg": 0.317,
+    "ardu_prob_final": 0.317,
+    "prediction": "PX4",
+    "n_turns": 3,
+    "n_segs": 6,
+    "per_turn_ardu_prob": [
+      0.112,
+      0.001,
+      0.052
+    ]
+  }
+]

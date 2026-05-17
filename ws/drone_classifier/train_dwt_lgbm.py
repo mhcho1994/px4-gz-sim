@@ -78,7 +78,9 @@ def _fill_gaps(mask, max_gap):
 def extract_turns(t, feat7col, traj_resampled, dt=0.02):
     """
     Return list of turn-segment dicts from a single trajectory.
-    Adaptive speed thresholds — works for both fast SITL and slow real flight.
+    Adaptive speed + yaw_rate thresholds, additional smoothing — works for
+    both fast SITL (EKF-smooth yaw_rate) and slow real flight (noisy position
+    derivative yaw_rate).
 
     feat7col cols: 0=vh, 1=speed_xy, 2=ah, 3=curvature, 4=yaw_rate, 5=yaw_aa, 6=spd_curv
     traj_resampled: (N, 6) — x, y, z, vx, vy, vz
@@ -94,15 +96,36 @@ def extract_turns(t, feat7col, traj_resampled, dt=0.02):
 
     has_heading = speed_xy >= min_heading_speed
 
-    yaw_rate_on  = 0.15
-    yaw_rate_off = 0.08
-    curv_on      = 0.03
-    curv_off     = 0.015
+    # ── smooth yaw_rate and curvature for detection only ──────────────────────
+    # Uses a 1-second window to suppress position-derivative noise in real
+    # flights without changing the signal fed into DWT features.
+    det_win = min(51, (N // 4) * 2 + 1)
+    det_win = max(det_win, 5)
+    yr_det   = _safe_savgol(yaw_rate,  window_length=det_win, poly_order=2)
+    curv_det = _safe_savgol(curvature, window_length=det_win, poly_order=2)
+
+    # ── adaptive thresholds from the smoothed signal ───────────────────────────
+    yr_moving = np.abs(yr_det[has_heading])
+    if len(yr_moving) > 10:
+        yr_ref       = float(np.percentile(yr_moving, 30))
+        yaw_rate_on  = max(0.15, yr_ref * 2.0)
+        yaw_rate_off = max(0.08, yr_ref * 1.2)
+    else:
+        yaw_rate_on, yaw_rate_off = 0.15, 0.08
+
+    curv_moving = curv_det[has_heading]
+    if len(curv_moving) > 10:
+        curv_ref = float(np.percentile(np.abs(curv_moving), 30))
+        curv_on  = max(0.03, curv_ref * 2.0)
+        curv_off = max(0.015, curv_ref * 1.2)
+    else:
+        curv_on, curv_off = 0.03, 0.015
+
     min_turn_len = max(MIN_SEG_LEN, int(0.4 / dt))
     merge_gap    = max(0, int(0.25 / dt))
 
-    raw_on  = has_heading & ((np.abs(yaw_rate) >= yaw_rate_on)  | (curvature >= curv_on))
-    raw_off = has_heading & ((np.abs(yaw_rate) >= yaw_rate_off) | (curvature >= curv_off))
+    raw_on  = has_heading & ((np.abs(yr_det) >= yaw_rate_on)  | (curv_det >= curv_on))
+    raw_off = has_heading & ((np.abs(yr_det) >= yaw_rate_off) | (curv_det >= curv_off))
 
     is_turn = np.zeros(N, dtype=bool)
     active = False
@@ -141,8 +164,8 @@ def _dwt_stats(coeff):
         float(np.max(coeff)),
         float(np.min(coeff)),
         float(scipy_kurtosis(coeff)),
-        float(np.argmax(coeff) / max(n - 1, 1)),   # peak loc max (0–1)
-        float(np.argmin(coeff) / max(n - 1, 1)),   # peak loc min (0–1)
+        float(np.argmax(coeff) / max(n - 1, 1)),
+        float(np.argmin(coeff) / max(n - 1, 1)),
     ]
 
 
@@ -161,7 +184,6 @@ def extract_dwt_features(turn_seg):
     feats = []
     for ch in channels:
         sig = zscore(ch.astype(np.float64))
-        # pad if too short
         if len(sig) < min_len:
             sig = np.pad(sig, (0, min_len - len(sig)), mode="edge")
         coeffs = pywt.wavedec(sig, WAVELET, level=LEVEL)

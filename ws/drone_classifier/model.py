@@ -1,6 +1,26 @@
 import torch
 import torch.nn as nn
 
+
+class DroneTrajectorMLP(nn.Module):
+    """MLP classifier for per-window dimensionless scalar features."""
+    def __init__(self, num_features=8):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(num_features, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(32, 2),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class DroneTrajectoryCNN(nn.Module):
     """Pure CNN model for drone flight classification"""
     def __init__(self, num_features):

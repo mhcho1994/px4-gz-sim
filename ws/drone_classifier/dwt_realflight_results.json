@@ -1,0 +1,148 @@
+[
+  {
+    "file": "0417_ardupilot_00_raw.csv",
+    "segment": 1,
+    "n_turns": 1,
+    "ardu_prob": 0.32683817691571904,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.327
+    ]
+  },
+  {
+    "file": "0417_ardupilot_01_raw.csv",
+    "segment": 1,
+    "n_turns": 2,
+    "ardu_prob": 0.3934638056234738,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.218,
+      0.569
+    ]
+  },
+  {
+    "file": "0417_ardupilot_02_raw.csv",
+    "segment": 0,
+    "n_turns": 2,
+    "ardu_prob": 0.22235159824841091,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.254,
+      0.19
+    ]
+  },
+  {
+    "file": "0417_cognipilot_00.csv",
+    "segment": 0,
+    "n_turns": 7,
+    "ardu_prob": 0.16211318486568477,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.179,
+      0.114,
+      0.096,
+      0.152,
+      0.131,
+      0.222,
+      0.242
+    ]
+  },
+  {
+    "file": "0417_cognipilot_01.csv",
+    "segment": 0,
+    "n_turns": 10,
+    "ardu_prob": 0.15954219457805144,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.176,
+      0.149,
+      0.075,
+      0.168,
+      0.161,
+      0.188,
+      0.009,
+      0.176,
+      0.22,
+      0.273
+    ]
+  },
+  {
+    "file": "0417_cognipilot_02.csv",
+    "segment": 0,
+    "n_turns": 19,
+    "ardu_prob": 0.20686842930033753,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.361,
+      0.279,
+      0.114,
+      0.181,
+      0.157,
+      0.181,
+      0.144,
+      0.173,
+      0.221,
+      0.252,
+      0.188,
+      0.18,
+      0.188,
+      0.206,
+      0.254,
+      0.215,
+      0.183,
+      0.17,
+      0.284
+    ]
+  },
+  {
+    "file": "0429_ardupilot_00_raw.csv",
+    "segment": 0,
+    "n_turns": 1,
+    "ardu_prob": 0.23546559085907348,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.235
+    ]
+  },
+  {
+    "file": "0429_ardupilot_01_raw.csv",
+    "segment": 0,
+    "n_turns": 1,
+    "ardu_prob": 0.27154978001913416,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.272
+    ]
+  },
+  {
+    "file": "0429_ardupilot_01_raw.csv",
+    "segment": 1,
+    "n_turns": 1,
+    "ardu_prob": 0.22142720218771678,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.221
+    ]
+  },
+  {
+    "file": "0429_ardupilot_01_raw.csv",
+    "segment": 2,
+    "n_turns": 1,
+    "ardu_prob": 0.09095121000125707,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.091
+    ]
+  },
+  {
+    "file": "rosbag2_2026_03_25-18_12_10__ardupilot_odom.csv",
+    "segment": 0,
+    "n_turns": 2,
+    "ardu_prob": 0.12409921603975645,
+    "prediction": "PX4",
+    "per_turn_ardu_prob": [
+      0.159,
+      0.09
+    ]
+  }
+]
