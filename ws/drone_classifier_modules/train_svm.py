@@ -9,7 +9,7 @@ from sklearn.metrics import classification_report, accuracy_score
 from evaluation_utils import plot_confusion_matrix, plot_pca_2d_projection, print_detailed_prediction_map
 
 def main():
-    cache_dir = Path("ws/drone_classifier_svm_new/cache")
+    cache_dir = Path("ws/drone_classifier_modules/cache")
     sitl_cache = cache_dir / "sitl_features.npz"
     real_cache = cache_dir / "real_features.npz"
 
@@ -17,7 +17,7 @@ def main():
     # 1. Load Pre-extracted Features
     # =====================================================================
     if not sitl_cache.exists():
-        print(f"[Error] Feature cache not found. Please run 'build_dwt_features.py' first.")
+        print(f"[Error] Feature cache not found. Please run 'feature_builder.py' first.")
         return
 
     print("\n[Info] Loading cached DWT features...")

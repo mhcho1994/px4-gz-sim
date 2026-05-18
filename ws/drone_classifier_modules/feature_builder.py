@@ -109,7 +109,7 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
     return X_ts, np.array(y), runs
 
 def main():
-    cache_dir = Path("ws/drone_classifier_svm_new/cache")
+    cache_dir = Path("ws/drone_classifier_modules/cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Process SITL Logs
