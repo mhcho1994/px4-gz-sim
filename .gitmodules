@@ -7,3 +7,6 @@
 	path = ap/ardupilot
 	url = https://github.com/mhcho1994/ardupilot.git
 	branch = Copter-4.6.2-MOTIF
+[submodule "/home/gayeonslee/FIRE/flightstack_sim/robust_learning"]
+	path = /home/gayeonslee/FIRE/flightstack_sim/robust_learning
+	url = https://github.com/4dimentional/robustlearn.git

@@ -1,0 +1,86 @@
+[
+  {
+    "file": "0417_ardupilot_00.csv",
+    "px4_prob": 0.481,
+    "prediction": "ArduPilot",
+    "n_windows": 23
+  },
+  {
+    "file": "0417_ardupilot_01.csv",
+    "px4_prob": 0.322,
+    "prediction": "ArduPilot",
+    "n_windows": 28
+  },
+  {
+    "file": "0417_ardupilot_02.csv",
+    "px4_prob": 0.404,
+    "prediction": "ArduPilot",
+    "n_windows": 35
+  },
+  {
+    "file": "0417_cognipilot_00.csv",
+    "px4_prob": 0.458,
+    "prediction": "ArduPilot",
+    "n_windows": 34
+  },
+  {
+    "file": "0417_cognipilot_01.csv",
+    "px4_prob": 0.66,
+    "prediction": "PX4",
+    "n_windows": 76
+  },
+  {
+    "file": "0417_cognipilot_02.csv",
+    "px4_prob": 0.562,
+    "prediction": "PX4",
+    "n_windows": 115
+  },
+  {
+    "file": "0501_PX4_Processed_1.csv",
+    "px4_prob": 0.825,
+    "prediction": "PX4",
+    "n_windows": 23
+  },
+  {
+    "file": "0501_PX4_processed.csv",
+    "px4_prob": 0.823,
+    "prediction": "PX4",
+    "n_windows": 15
+  },
+  {
+    "file": "0501_ardu_processed_1.csv",
+    "px4_prob": 0.74,
+    "prediction": "PX4",
+    "n_windows": 109
+  },
+  {
+    "file": "0501_ardu_processed_2.csv",
+    "px4_prob": 0.784,
+    "prediction": "PX4",
+    "n_windows": 109
+  },
+  {
+    "file": "0501_px4_processed_2.csv",
+    "px4_prob": 0.783,
+    "prediction": "PX4",
+    "n_windows": 26
+  },
+  {
+    "file": "0501_px4_processed_3.csv",
+    "px4_prob": 0.866,
+    "prediction": "PX4",
+    "n_windows": 35
+  },
+  {
+    "file": "0501_px4_processed_4.csv",
+    "px4_prob": 0.57,
+    "prediction": "PX4",
+    "n_windows": 95
+  },
+  {
+    "file": "rosbag2_2026_03_25-18_12_10__ardupilot_odom.csv",
+    "px4_prob": 0.305,
+    "prediction": "ArduPilot",
+    "n_windows": 62
+  }
+]

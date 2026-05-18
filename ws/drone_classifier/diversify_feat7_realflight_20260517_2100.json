@@ -1,0 +1,100 @@
+[
+  {
+    "file": "0417_ardupilot_00.csv",
+    "px4_prob": 0.402,
+    "ood_score": 4.9339,
+    "prediction": "ArduPilot",
+    "n_windows": 23
+  },
+  {
+    "file": "0417_ardupilot_01.csv",
+    "px4_prob": 0.348,
+    "ood_score": 4.7037,
+    "prediction": "ArduPilot",
+    "n_windows": 28
+  },
+  {
+    "file": "0417_ardupilot_02.csv",
+    "px4_prob": 0.446,
+    "ood_score": 6.8318,
+    "prediction": "ArduPilot",
+    "n_windows": 35
+  },
+  {
+    "file": "0417_cognipilot_00.csv",
+    "px4_prob": 0.474,
+    "ood_score": 5.3582,
+    "prediction": "ArduPilot",
+    "n_windows": 34
+  },
+  {
+    "file": "0417_cognipilot_01.csv",
+    "px4_prob": 0.675,
+    "ood_score": 4.8015,
+    "prediction": "PX4",
+    "n_windows": 76
+  },
+  {
+    "file": "0417_cognipilot_02.csv",
+    "px4_prob": 0.619,
+    "ood_score": 4.6402,
+    "prediction": "PX4",
+    "n_windows": 115
+  },
+  {
+    "file": "0501_PX4_Processed_1.csv",
+    "px4_prob": 0.777,
+    "ood_score": 5.5787,
+    "prediction": "PX4",
+    "n_windows": 23
+  },
+  {
+    "file": "0501_PX4_processed.csv",
+    "px4_prob": 0.794,
+    "ood_score": 4.2031,
+    "prediction": "PX4",
+    "n_windows": 15
+  },
+  {
+    "file": "0501_ardu_processed_1.csv",
+    "px4_prob": 0.785,
+    "ood_score": 6.3004,
+    "prediction": "PX4",
+    "n_windows": 109
+  },
+  {
+    "file": "0501_ardu_processed_2.csv",
+    "px4_prob": 0.658,
+    "ood_score": 6.5609,
+    "prediction": "PX4",
+    "n_windows": 109
+  },
+  {
+    "file": "0501_px4_processed_2.csv",
+    "px4_prob": 0.791,
+    "ood_score": 5.1644,
+    "prediction": "PX4",
+    "n_windows": 26
+  },
+  {
+    "file": "0501_px4_processed_3.csv",
+    "px4_prob": 0.846,
+    "ood_score": 5.7518,
+    "prediction": "PX4",
+    "n_windows": 35
+  },
+  {
+    "file": "0501_px4_processed_4.csv",
+    "px4_prob": 0.574,
+    "ood_score": 6.6338,
+    "prediction": "PX4",
+    "n_windows": 95
+  },
+  {
+    "file": "rosbag2_2026_03_25-18_12_10__ardupilot_odom.csv",
+    "px4_prob": 0.308,
+    "ood_score": 8.35,
+    "prediction": "ArduPilot",
+    "n_windows": 62
+  }
+]
