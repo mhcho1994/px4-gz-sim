@@ -42,6 +42,20 @@ def compute_dwt_statistics(timeseries_matrix, waveletname='db4', level=3):
             
     return np.array(flight_features)
 
+def pad_sequences(X_list):
+    """
+    Pads variable-length sequences with zeros to match the maximum length.
+    Returns a 3D numpy array: (num_samples, max_length, num_features).
+    """
+    max_len = max(len(x) for x in X_list)
+    num_features = X_list[0].shape[1]
+    X_padded = np.zeros((len(X_list), max_len, num_features))
+    
+    for i, x in enumerate(X_list):
+        X_padded[i, :len(x), :] = x
+        
+    return X_padded
+
 def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
     """
     Crawls folders, runs the ETL pipeline (Extract -> Kinematics -> Segment), 
@@ -119,14 +133,18 @@ def main():
     if len(X_sitl_ts) > 0:
         print(f"[Info] Extracting DWT features for SITL data...")
         X_sitl_dwt = np.array([compute_dwt_statistics(ts) for ts in X_sitl_ts])
-        np.savez(cache_dir / "sitl_features.npz", X=X_sitl_dwt, y=y_sitl)
+        X_sitl_seq = pad_sequences(X_sitl_ts)       # Pad sequences for 1D-CNN
+
+
+        # np.savez(cache_dir / "sitl_features.npz", X=X_sitl_dwt, y=y_sitl)
+        np.savez(cache_dir / "sitl_features.npz", X=X_sitl_dwt, X_seq=X_sitl_seq, y=y_sitl)
         print(f"[Success] Cached SITL features (Shape: {X_sitl_dwt.shape})")
     else:
         print("[Warning] No valid SITL features extracted.")
 
     # 2. Process Real Flight Logs
     print("\n[Info] Executing ETL Pipeline for Real flight data...")
-    test_folders = ["260501_flight_logs_old"] 
+    test_folders = ["260417_flight_logs","260424_flight_logs", "260501_flight_logs_old"] 
     X_real_ts, y_real_list, runs_real_list = [], [], []
     
     for folder in test_folders:
@@ -138,7 +156,9 @@ def main():
     if len(X_real_ts) > 0:
         print(f"[Info] Extracting DWT features for Real flight data...")
         X_real_dwt = np.array([compute_dwt_statistics(ts) for ts in X_real_ts])
-        
+        X_real_seq = pad_sequences(X_real_ts)            # Pad sequences for 1D-CNN
+
+
         # Pre-filter NaN values during the caching stage
         valid_indices = ~np.isnan(X_real_dwt).any(axis=1)
         removed_count = len(X_real_dwt) - np.sum(valid_indices)
@@ -146,10 +166,12 @@ def main():
             print(f"[Warning] Removed {removed_count} corrupted segments containing NaN values.")
             
         X_real_dwt = X_real_dwt[valid_indices]
+        X_real_seq = X_real_seq[valid_indices]
         y_real = np.array(y_real_list)[valid_indices]
         runs_real = np.array(runs_real_list)[valid_indices]
 
-        np.savez(cache_dir / "real_features.npz", X=X_real_dwt, y=y_real, runs=runs_real)
+        # np.savez(cache_dir / "real_features.npz", X=X_real_dwt, y=y_real, runs=runs_real)
+        np.savez(cache_dir / "real_features.npz", X=X_real_dwt, X_seq=X_real_seq, y=y_real, runs=runs_real)
         print(f"[Success] Cached Real features (Shape: {X_real_dwt.shape})")
     else:
         print("[Warning] No valid real flight features extracted.")
