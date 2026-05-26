@@ -48,10 +48,35 @@ eeprom.bin
 mav.tlog
 mav.tlog.*
 
+/script/
+!/script/setup_ml.sh
+venv/
 # ================================
 # Docker Artifacts
 # ================================
 /.docker_home
+
+# ================================
+# ML Artifacts (tracked in Weights & Biases)
+# ================================
+
+# Trained model checkpoints
+*.pt
+*.pth
+
+# Evaluation result JSONs from DIVERSIFY pipeline
+ws/drone_classifier/diversify_*_eval.json
+ws/drone_classifier/diversify_*_realflight_*.json
+ws/drone_classifier/real_flight_test_results.json
+
+# Robust scaler stats (regenerable by training)
+ws/drone_classifier/robust_stats_*.json
+
+# Domain split / diagnostic plots
+ws/drone_classifier/domain_split_visualization.png
+
+# W&B local run directory
+wandb/
 
 # ================================
 # Notes
