@@ -79,7 +79,7 @@ def main():
     # Adjust cache directory if necessary based on your folder structure
     cache_dir = Path("ws/drone_classifier_modules/cache") 
     sitl_cache = cache_dir / "sitl_features.npz"
-    real_cache = cache_dir / "real_features.npz"
+    # real_cache = cache_dir / "real_features.npz"
 
     if not sitl_cache.exists():
         print("[Error] Cache file not found. Please run 'feature_builder.py' first.")
@@ -90,10 +90,38 @@ def main():
     sitl_data = np.load(sitl_cache)
     X_sitl_seq, y_sitl = sitl_data['X_seq'], sitl_data['y'] 
     
-    X_real_seq, y_real, runs_real = None, None, None
-    if real_cache.exists():
-        real_data = np.load(real_cache)
-        X_real_seq, y_real, runs_real = real_data['X_seq'], real_data['y'], real_data['runs']
+    # 2. Load multiple real flight datasets if available
+    test_folders = ["260417_flight_logs", "260424_flight_logs", "260501_flight_logs_old"]
+    X_real_seq_list, y_real_list, runs_real_list = [], [], []
+    for folder in test_folders:
+        real_cache = cache_dir / f"{folder}_features.npz"
+        if real_cache.exists():
+            real_data = np.load(real_cache)
+            X_real_seq_list.append(real_data['X_seq'])
+            y_real_list.append(real_data['y'])
+            runs_real_list.append(real_data['runs'])
+            print(f"  -> Loaded '{folder}' features.")
+
+    if len(X_real_seq_list) > 0:
+        # Concatenate multiple real datasets and ensure consistent sequence lengths by padding
+        max_len = max(x.shape[1] for x in X_real_seq_list)
+        for i in range(len(X_real_seq_list)):
+            x = X_real_seq_list[i]
+            if x.shape[1] < max_len:
+                pad_width = max_len - x.shape[1]
+                X_real_seq_list[i] = np.pad(x, ((0,0), (0, pad_width), (0,0)), mode='constant')
+        
+        X_real_seq = np.vstack(X_real_seq_list)
+        y_real = np.concatenate(y_real_list)
+        runs_real = np.concatenate(runs_real_list)
+    else:
+        X_real_seq, y_real, runs_real = None, None, None
+
+        
+    # X_real_seq, y_real, runs_real = None, None, None
+    # if real_cache.exists():
+    #     real_data = np.load(real_cache)
+    #     X_real_seq, y_real, runs_real = real_data['X_seq'], real_data['y'], real_data['runs']
 
     # 2. Train/Test Split & Standard Scaling
     X_train, X_test, y_train, y_test = train_test_split(X_sitl_seq, y_sitl, test_size=0.1, random_state=42)

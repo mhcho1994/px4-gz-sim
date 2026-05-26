@@ -91,14 +91,14 @@ def print_detailed_prediction_map(y_real, y_real_pred, runs_real):
     label_map = {0: "PX4", 1: "ArduPilot", 2: "Cogni"}
     
     print("\n[Detailed Prediction Map]")
-    print("-" * 75)
-    print(f"{'No.':<4} | {'Run Folder':<12} | {'True Label':<12} | {'Prediction':<12} | {'Status'}")
-    print("-" * 75)
+    print("-" * 85)
+    print(f"{'No.':<4} | {'Run Folder':<30} | {'True Label':<12} | {'Prediction':<12} | {'Status'}")
+    print("-" * 85)
     
     for i in range(len(y_real)):
         run_name = runs_real[i]
         true_name = label_map.get(y_real[i], "Unknown")
         pred_name = label_map.get(y_real_pred[i], "Unknown")
         status = "Match" if true_name == pred_name else "Fail"
-        print(f"{i+1:<4} | {run_name:<12} | {true_name:<12} | {pred_name:<12} | {status}")
-    print("-" * 75)
+        print(f"{i+1:<4} | {run_name:<30} | {true_name:<12} | {pred_name:<12} | {status}")
+    print("-" * 85)

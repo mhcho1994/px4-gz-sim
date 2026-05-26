@@ -48,11 +48,27 @@ def main():
     # =====================================================================
     # 3. Evaluate on Real Flight Data
     # =====================================================================
-    if real_cache.exists():
-        real_data = np.load(real_cache)
-        X_real, y_real, runs_real = real_data['X'], real_data['y'], real_data['runs']
-        print(f"\n[Info] Testing on Real Flight Features (Shape: {X_real.shape})...")
+    test_folders = ["260417_flight_logs", "260424_flight_logs", "260501_flight_logs_old"]
+    
+    X_real_list, y_real_list, runs_real_list = [], [], []
 
+    print("\n[Info] Loading cached Real Flight features...")
+    for folder in test_folders:
+        real_cache = cache_dir / f"{folder}_features.npz"
+        if real_cache.exists():
+            real_data = np.load(real_cache)
+            X_real_list.append(real_data['X'])
+            y_real_list.append(real_data['y'])
+            runs_real_list.append(real_data['runs'])
+            print(f"  -> Loaded '{folder}' features.")
+
+    if len(X_real_list) > 0:
+        X_real = np.vstack(X_real_list)
+        y_real = np.hstack(y_real_list)
+        runs_real = np.hstack(runs_real_list)
+
+        print(f"\n[Info] Testing on Real Flight Features (Shape: {X_real.shape})...")
+        
         X_real_scaled = scaler.transform(X_real)
         y_real_pred = model.predict(X_real_scaled)
         

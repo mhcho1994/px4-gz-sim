@@ -113,7 +113,7 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
                             feat_turn = turn_segment['features'][:, target_indices]
                             X_ts.append(feat_turn)
                             y.append(class_label)
-                            runs.append(run_folder)
+                            runs.append(f"{base_folder}/{run_folder}")
                             count_in_run += 1
                             
                     if count_in_run > 0:
@@ -135,8 +135,6 @@ def main():
         X_sitl_dwt = np.array([compute_dwt_statistics(ts) for ts in X_sitl_ts])
         X_sitl_seq = pad_sequences(X_sitl_ts)       # Pad sequences for 1D-CNN
 
-
-        # np.savez(cache_dir / "sitl_features.npz", X=X_sitl_dwt, y=y_sitl)
         np.savez(cache_dir / "sitl_features.npz", X=X_sitl_dwt, X_seq=X_sitl_seq, y=y_sitl)
         print(f"[Success] Cached SITL features (Shape: {X_sitl_dwt.shape})")
     else:
@@ -145,18 +143,20 @@ def main():
     # 2. Process Real Flight Logs
     print("\n[Info] Executing ETL Pipeline for Real flight data...")
     test_folders = ["260417_flight_logs","260424_flight_logs", "260501_flight_logs_old"] 
-    X_real_ts, y_real_list, runs_real_list = [], [], []
+    # X_real_ts, y_real_list, runs_real_list = [], [], []
     
     for folder in test_folders:
         X_ts, y, runs = process_dataset_folder(folder, is_sitl=False, measurement_type='mocap')
-        X_real_ts.extend(X_ts)
-        y_real_list.extend(y.tolist())
-        runs_real_list.extend(runs)
+        # X_real_ts.extend(X_ts)
+        # y_real_list.extend(y.tolist())
+        # runs_real_list.extend(runs)
 
-    if len(X_real_ts) > 0:
+    if len(X_ts) > 0:
         print(f"[Info] Extracting DWT features for Real flight data...")
-        X_real_dwt = np.array([compute_dwt_statistics(ts) for ts in X_real_ts])
-        X_real_seq = pad_sequences(X_real_ts)            # Pad sequences for 1D-CNN
+        # X_real_dwt = np.array([compute_dwt_statistics(ts) for ts in X_real_ts])
+        X_real_dwt = np.array([compute_dwt_statistics(ts) for ts in X_ts])
+        # X_real_seq = pad_sequences(X_real_ts)            # Pad sequences for 1D-CNN
+        X_real_seq = pad_sequences(X_ts)            # Pad sequences for 1D-CNN
 
 
         # Pre-filter NaN values during the caching stage
@@ -167,11 +167,14 @@ def main():
             
         X_real_dwt = X_real_dwt[valid_indices]
         X_real_seq = X_real_seq[valid_indices]
-        y_real = np.array(y_real_list)[valid_indices]
-        runs_real = np.array(runs_real_list)[valid_indices]
+        # y_real = np.array(y_real_list)[valid_indices]
+        y_real = np.array(y)[valid_indices]
+        # runs_real = np.array(runs_real_list)[valid_indices]
+        runs_real = np.array(runs)[valid_indices]
 
-        # np.savez(cache_dir / "real_features.npz", X=X_real_dwt, y=y_real, runs=runs_real)
-        np.savez(cache_dir / "real_features.npz", X=X_real_dwt, X_seq=X_real_seq, y=y_real, runs=runs_real)
+        cache_file = cache_dir / f"{folder}_features.npz"
+        np.savez(cache_file, X=X_real_dwt, X_seq=X_real_seq, y=y_real, runs=runs_real)
+        # np.savez(cache_dir / "real_features.npz", X=X_real_dwt, X_seq=X_real_seq, y=y_real, runs=runs_real)
         print(f"[Success] Cached Real features (Shape: {X_real_dwt.shape})")
     else:
         print("[Warning] No valid real flight features extracted.")
