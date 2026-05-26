@@ -11,6 +11,8 @@ Strategy A : Sim2Real barrier — GRL adversarial domain confusion
 Strategy B : time-scale / agility invariance — kinematic features already handle it
 """
 
+import os
+import subprocess
 import sys
 import json
 import random
@@ -26,6 +28,7 @@ from torch.autograd import Function
 from torch.utils.data import DataLoader
 from scipy.spatial.distance import cdist
 from sklearn.metrics import classification_report
+import wandb
 
 sys.path.insert(0, str(Path(__file__).parent))
 from train_dwt_lgbm import PX4_FOLDER, ARDU_FOLDER, TEST_RATIO
@@ -59,6 +62,21 @@ MIN_WIN         = 30
 REALFLIGHT_DIR  = Path("/home/gayeonslee/FIRE/flightstack_sim/data/realflight")
 
 DEVICE = torch.device("cpu")
+
+OOD_PCTILE = 95     # 95th-percentile of SITL-val Mahalanobis distances → threshold
+MAHA_RIDGE = 1e-3   # Σ + λI ridge for numerical stability when inverting per-class covariance
+
+WANDB_PROJECT = "drone-firmware-classifier"
+
+
+def _git_sha():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).parent, stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -107,6 +125,14 @@ class FlightFeaturizer(nn.Module):
         # x: (B, N_FEAT, WIN_LEN)
         x = self.block3(self.block2(self.block1(x)))  # (B, CNN_CH, L')
         return self.pool(x).squeeze(-1)               # (B, CNN_CH)
+
+    def forward_features(self, x):
+        """Return intermediate feature maps for multi-level OOD scoring."""
+        f1 = self.block1(x)                           # (B, 32, 50)   shallow
+        f2 = self.block2(f1)                          # (B, 64, 25)   mid
+        f3 = self.block3(f2)                          # (B, 128, 25)
+        h  = self.pool(f3).squeeze(-1)                # (B, 128)
+        return f1, f2, h
 
 
 class FeatBottleneck(nn.Module):
@@ -317,10 +343,24 @@ class DiversifyFlight(nn.Module):
     def predict(self, x):
         return self.classifier(self.bottleneck(self.featurizer(x)))
 
-    def ood_score(self, x):
-        """Min distance to nearest prototype. High value = likely OOD."""
-        logits = self.predict(x)   # (B, n_classes) = -dist
-        return (-logits).min(dim=1).values  # (B,) minimum distance
+    def extract_z(self, x):
+        """Bottleneck features (B, BOTTLENECK_DIM) — used by classifier."""
+        return self.bottleneck(self.featurizer(x))
+
+    def extract_multi_z(self, x):
+        """
+        Multi-level features for Mahalanobis OOD (Lee et al. 2018, NeurIPS).
+          L0 block1     (B, 32)   shallow — least affected by GRL,
+                                   retains firmware-specific micro-noise → Near-OOD
+          L1 block2     (B, 64)   mid
+          L2 bottleneck (B, 32)   deep, post-GRL → Far-OOD (physical abnormality)
+        Spatial dim is globally-average-pooled (Lee 2018 convention).
+        """
+        f1, f2, h = self.featurizer.forward_features(x)
+        z0 = f1.mean(dim=-1)               # (B, 32)
+        z1 = f2.mean(dim=-1)               # (B, 64)
+        z2 = self.bottleneck(h)            # (B, 32)
+        return [z0, z1, z2]
 
 
 def _make_optimizers(model):
@@ -416,10 +456,119 @@ def eval_accuracy(model, loader):
     return correct / max(total, 1)
 
 
-def evaluate_realflight(model, csv_files):
+LEVEL_NAMES = ["block1", "block2", "bottleneck"]   # multi-level Mahalanobis taps
+
+
+@torch.no_grad()
+def compute_class_stats(model, loader):
     """
-    Classify each real-flight CSV using process_rosbag_flight_data (→ 50Hz feat7).
-    Majority vote over windows in each file.
+    Per-class Gaussian fit at each of the L levels exposed by extract_multi_z.
+    Returns a list of (means_l, precisions_l) — one (NUM_CLASSES, D_l) / (NUM_CLASSES, D_l, D_l)
+    pair per level. Rationale: shallow levels (block1) retain firmware-specific
+    micro-noise that GRL has not yet wiped out → catches Near-OOD (e.g. Cognipilot);
+    deep level (bottleneck) catches Far-OOD (manual / physical-anomaly flights).
+    """
+    model.eval()
+
+    # ── one forward pass on a tiny batch to discover level shapes ────────────
+    sample_x = next(iter(loader))[0][:2].to(DEVICE).float()
+    sample_zs = model.extract_multi_z(sample_x)
+    n_levels = len(sample_zs)
+    dims     = [z.size(1) for z in sample_zs]
+
+    # ── accumulate per-level features per class ──────────────────────────────
+    feats = [[[] for _ in range(NUM_CLASSES)] for _ in range(n_levels)]
+    for batch in loader:
+        x = batch[0].to(DEVICE).float()
+        y = batch[1].to(DEVICE).long()
+        zs = model.extract_multi_z(x)
+        for l in range(n_levels):
+            z_l_cpu = zs[l].cpu()
+            for c in range(NUM_CLASSES):
+                m = (y == c).cpu()
+                if m.any():
+                    feats[l][c].append(z_l_cpu[m])
+
+    # ── per-level Gaussian fit ───────────────────────────────────────────────
+    stats = []
+    cls_names = ["Ardu", "PX4 "]
+    for l in range(n_levels):
+        D     = dims[l]
+        eye   = torch.eye(D, device=DEVICE)
+        means = torch.zeros(NUM_CLASSES, D, device=DEVICE)
+        precs = torch.zeros(NUM_CLASSES, D, D, device=DEVICE)
+        print(f"  L{l} [{LEVEL_NAMES[l]:<10}] D={D}")
+        for c in range(NUM_CLASSES):
+            Z    = torch.cat(feats[l][c], dim=0).to(DEVICE)        # (N_c, D)
+            mu   = Z.mean(dim=0)
+            diff = Z - mu
+            cov  = (diff.T @ diff) / max(len(Z) - 1, 1)            # (D, D)
+            prec = torch.linalg.inv(cov + MAHA_RIDGE * eye)
+            means[c] = mu
+            precs[c] = prec
+            print(f"     {cls_names[c]}  N={len(Z):4d}  tr(Σ)={cov.diag().sum().item():.3f}")
+        print(f"     ||μ_Ardu - μ_PX4|| = {(means[0] - means[1]).norm().item():.3f}")
+        stats.append((means, precs))
+    return stats
+
+
+def _maha_sum_min(zs, class_stats):
+    """
+    Multi-level OOD score: Σ_l min_k (z_l - μ_l,k)ᵀ Σ_l,k⁻¹ (z_l - μ_l,k).
+      zs:         list of (B, D_l) — output of extract_multi_z
+      class_stats: list of (means_l, precs_l)
+    Returns (B,) tensor — sum of per-level min squared Mahalanobis distances.
+    """
+    total = None
+    for z, (means, precs) in zip(zs, class_stats):
+        diffs = z.unsqueeze(1) - means.unsqueeze(0)              # (B, K, D)
+        d2    = torch.einsum('bkd,kde,bke->bk', diffs, precs, diffs)  # (B, K)
+        d_min = d2.min(dim=1).values                              # (B,)
+        total = d_min if total is None else total + d_min
+    return total
+
+
+@torch.no_grad()
+def calibrate_threshold(model, loader, class_stats):
+    """95th-percentile of multi-level Σ-Maha² on SITL val set."""
+    model.eval()
+    dists = []
+    for batch in loader:
+        x  = batch[0].to(DEVICE).float()
+        zs = model.extract_multi_z(x)
+        d2 = _maha_sum_min(zs, class_stats)
+        dists.extend(d2.cpu().tolist())
+    dists = np.array(dists)
+    thr   = float(np.percentile(dists, OOD_PCTILE))
+    print(f"  Val Σ-Maha²  mean={dists.mean():.3f}  std={dists.std():.3f}"
+          f"  {OOD_PCTILE}th-pct={thr:.3f}")
+    return thr
+
+
+@torch.no_grad()
+def compute_rejection_rate(model, loader, class_stats, threshold):
+    """Fraction of windows with multi-level Σ-Maha² > threshold (SITL false-rejection)."""
+    model.eval()
+    rejected = total = 0
+    for batch in loader:
+        x  = batch[0].to(DEVICE).float()
+        zs = model.extract_multi_z(x)
+        d2 = _maha_sum_min(zs, class_stats)
+        rejected += (d2 > threshold).sum().item()
+        total    += len(x)
+    return rejected / max(total, 1)
+
+
+def evaluate_realflight(model, csv_files, class_stats, threshold):
+    """
+    For each real-flight CSV:
+      1. window → multi-level z's (block1 / block2 / bottleneck)
+      2. Σ-Maha² = Σ_l min_k (z_l - μ_l,k)ᵀ Σ_l,k⁻¹ (z_l - μ_l,k)
+         - block1 catches Near-OOD (Cognipilot etc — firmware micro-noise)
+         - bottleneck catches Far-OOD (manual / physical-anomaly flights)
+      3. If Σ-Maha² > threshold → Unknown
+         else → softmax(classifier(z_bottleneck)) → PX4 / ArduPilot
+      4. File verdict = majority vote across windows.
     """
     model.eval()
     results = []
@@ -433,30 +582,45 @@ def evaluate_realflight(model, csv_files):
 
             all_wins = []
             for seg_info in segments:
-                feat = seg_info['data'][4]   # (T, 7) at 50Hz
+                feat = seg_info['data'][4]
                 if feat is None or len(feat) < MIN_WIN:
                     continue
                 all_wins.extend(_slide_windows(feat))
-
             if not all_wins:
                 print(f"  [SKIP] {fname}  (no windows)")
                 continue
 
-            X      = torch.stack(all_wins).to(DEVICE)        # (N, N_FEAT, WIN_LEN)
-            logits = model.predict(X)
-            probs  = F.softmax(logits, dim=1).cpu().numpy()  # (N, 2)
-            ood    = model.ood_score(X).cpu().numpy()        # (N,) min-dist
-            p_px4  = float(probs[:, 1].mean())
-            ood_mean = float(ood.mean())
-            pred   = "PX4" if p_px4 > 0.5 else "ArduPilot"
-            per_win = ", ".join(f"{p:.2f}" for p in probs[:, 1])
-            print(f"  {fname:<50s}  PX4={p_px4*100:.1f}%  OOD={ood_mean:.3f}  → {pred}  "
-                  f"[{len(all_wins)}w: {per_win}]")
-            results.append({"file": fname,
-                            "px4_prob": round(p_px4, 3),
-                            "ood_score": round(ood_mean, 4),
-                            "prediction": pred,
-                            "n_windows": len(all_wins)})
+            X       = torch.stack(all_wins).to(DEVICE)
+            zs      = model.extract_multi_z(X)
+            z_deep  = zs[-1]                                     # bottleneck for classifier
+            d_min   = _maha_sum_min(zs, class_stats)             # (N,)
+            mask    = (d_min <= threshold)
+            n_rej   = int((~mask).sum())
+            n_acc   = int(mask.sum())
+            d_mean  = float(d_min.mean())
+
+            if n_acc == 0:
+                verdict, p_px4 = "Unknown", float("nan")
+                n_px4 = n_ardu = 0
+            else:
+                probs_in = F.softmax(model.classifier(z_deep[mask]), dim=1)[:, 1].cpu().numpy()
+                p_px4    = float(probs_in.mean())
+                n_px4    = int((probs_in > 0.5).sum())
+                n_ardu   = n_acc - n_px4
+                votes = {"PX4": n_px4, "ArduPilot": n_ardu, "Unknown": n_rej}
+                verdict = max(votes, key=votes.get)
+
+            print(f"  {fname:<50s}  Σ-Maha²={d_mean:.2f}  rej={n_rej}/{len(all_wins)}"
+                  f"({100*n_rej/len(all_wins):.0f}%)  → {verdict}")
+            results.append({"file": fname, "prediction": verdict,
+                "px4_prob":    round(p_px4, 3) if not np.isnan(p_px4) else None,
+                "maha_mean":   round(d_mean, 4),
+                "n_windows":   len(all_wins),
+                "n_accepted":  n_acc,
+                "n_rejected":  n_rej,
+                "n_px4":       n_px4,
+                "n_ardu":      n_ardu,
+                "reject_rate": round(n_rej / len(all_wins), 4)})
     model.train()
     return results
 
@@ -475,6 +639,28 @@ def main():
     print(f"  LATENT_K={LATENT_DOMAIN_N}  epochs={MAX_EPOCH}×{LOCAL_EPOCH}  lr={LR}")
     print(f"  class: 0=ArduPilot  1=PX4")
     print(f"{'='*70}\n")
+
+    run = wandb.init(
+        project=WANDB_PROJECT,
+        name=f"diversify_feat7_{ts}",
+        job_type="train",
+        config={
+            "feat_hz": FEAT_HZ, "win_sec": WIN_SEC, "win_len": WIN_LEN,
+            "hop_len": HOP_LEN, "n_feat": N_FEAT, "num_classes": NUM_CLASSES,
+            "latent_domain_n": LATENT_DOMAIN_N, "bottleneck_dim": BOTTLENECK_DIM,
+            "dis_hidden": DIS_HIDDEN, "cnn_ch": CNN_CH,
+            "alpha": ALPHA, "alpha1": ALPHA1, "lam": LAM,
+            "local_epoch": LOCAL_EPOCH, "max_epoch": MAX_EPOCH,
+            "lr": LR, "lr_decay1": LR_DECAY1, "lr_decay2": LR_DECAY2,
+            "weight_decay": WEIGHT_DECAY, "beta1": BETA1,
+            "batch_size": BATCH_SIZE, "seed": SEED, "min_win": MIN_WIN,
+            "ood_pctile": OOD_PCTILE, "maha_ridge": MAHA_RIDGE,
+            "git_sha": _git_sha(),
+        },
+    )
+    # Snapshot all .py in this dir so the run is reproducible even with
+    # uncommitted changes in the working tree.
+    run.log_code(str(Path(__file__).parent))
 
     # ── train/test split ──────────────────────────────────────────────────────
     px4_files  = [(p, 1) for p in sorted(Path(PX4_FOLDER).glob("*.ulg"))]
@@ -514,6 +700,10 @@ def main():
     model = DiversifyFlight().to(DEVICE)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  Model params: {n_params:,}")
+    wandb.config.update({"model_params": n_params,
+                         "n_train_windows": len(train_ds),
+                         "n_val_windows":   len(val_ds),
+                         "n_test_windows":  len(test_ds)})
     model.train()
     opta, optd, opt = _make_optimizers(model)
 
@@ -554,11 +744,27 @@ def main():
         print(f"  Acc  train={tr_acc*100:.1f}%  val={val_acc*100:.1f}%"
               f"  SITL-test={te_acc*100:.1f}%")
 
+        wandb.log({
+            "round": rnd + 1,
+            "loss/update_d_total": d_tot / nb,
+            "loss/update_d_dis":   d_dis / nb,
+            "loss/update_d_cls":   d_cls / nb,
+            "loss/update_total":   u_tot / nb,
+            "loss/update_cls":     u_cls / nb,
+            "loss/update_dis":     u_dis / nb,
+            "acc/train": tr_acc,
+            "acc/val":   val_acc,
+            "acc/test":  te_acc,
+        }, step=rnd + 1)
+
         if val_acc > best_val_acc:
             best_val_acc  = val_acc
             best_test_acc = te_acc
             torch.save(model.state_dict(), model_path)
             print(f"  ★ saved  (val={val_acc*100:.1f}%)")
+            wandb.run.summary["best/val_acc"]  = best_val_acc
+            wandb.run.summary["best/test_acc"] = best_test_acc
+            wandb.run.summary["best/round"]    = rnd + 1
 
     print(f"\n  Best val={best_val_acc*100:.1f}%  → SITL test={best_test_acc*100:.1f}%")
 
@@ -577,21 +783,64 @@ def main():
             y_true.extend(y_t); y_pred.extend(p)
     print(classification_report(y_true, y_pred, target_names=["ArduPilot", "PX4"]))
 
+    # ── Multi-level Mahalanobis OOD calibration ───────────────────────────────
+    print(f"\n{'='*70}\n  Multi-level Mahalanobis OOD Calibration"
+          f"  (levels: {', '.join(LEVEL_NAMES)})")
+    class_stats = compute_class_stats(model, train_ns_ld)
+    threshold   = calibrate_threshold(model, val_ld, class_stats)
+    sitl_false_reject = compute_rejection_rate(model, test_ld, class_stats, threshold)
+    print(f"  SITL false-rejection: {sitl_false_reject*100:.1f}%")
+    wandb.run.summary["ood/threshold"]         = threshold
+    wandb.run.summary["ood/sitl_false_reject"] = sitl_false_reject
+
     # ── real flight evaluation ────────────────────────────────────────────────
     csv_files = [p for p in sorted(REALFLIGHT_DIR.glob("*.csv"))
                  if "_raw" not in p.name]
     print(f"\n{'='*70}\n  Real Flight Evaluation ({len(csv_files)} files)\n{'='*70}\n")
-    results = evaluate_realflight(model, csv_files)
+    results = evaluate_realflight(model, csv_files, class_stats, threshold)
 
-    ardu = sum(1 for r in results if r["prediction"] == "ArduPilot")
-    px4  = sum(1 for r in results if r["prediction"] == "PX4")
-    print(f"\n  Total:{len(results)}  ArduPilot:{ardu}  PX4:{px4}")
+    ardu    = sum(1 for r in results if r["prediction"] == "ArduPilot")
+    px4     = sum(1 for r in results if r["prediction"] == "PX4")
+    unknown = sum(1 for r in results if r["prediction"] == "Unknown")
+    print(f"\n  Total:{len(results)}  ArduPilot:{ardu}  PX4:{px4}  Unknown:{unknown}")
 
     out = f"diversify_feat7_realflight_{ts}.json"
     with open(out, "w") as f:
-        import json
         json.dump(results, f, indent=2)
     print(f"  Results: {out}\n  Model:   {model_path}")
+
+    wandb.run.summary.update({
+        "realflight/total":     len(results),
+        "realflight/ardupilot": ardu,
+        "realflight/px4":       px4,
+        "realflight/unknown":   unknown,
+    })
+    realflight_table = wandb.Table(
+        columns=["file", "prediction", "px4_prob", "maha_mean",
+                 "n_windows", "n_accepted", "n_rejected", "n_px4",
+                 "n_ardu", "reject_rate"],
+        data=[[r["file"], r["prediction"], r.get("px4_prob"), r["maha_mean"],
+               r["n_windows"], r["n_accepted"], r["n_rejected"],
+               r["n_px4"], r["n_ardu"], r["reject_rate"]] for r in results],
+    )
+    wandb.log({"realflight/results": realflight_table})
+
+    artifact = wandb.Artifact(
+        name="diversify_feat7",
+        type="model",
+        metadata={
+            "timestamp":         ts,
+            "git_sha":           _git_sha(),
+            "best_val_acc":      best_val_acc,
+            "best_test_acc":     best_test_acc,
+            "ood_threshold":     threshold,
+            "sitl_false_reject": sitl_false_reject,
+        },
+    )
+    artifact.add_file(model_path)
+    artifact.add_file(out)
+    run.log_artifact(artifact)
+    wandb.finish()
 
 
 if __name__ == "__main__":
