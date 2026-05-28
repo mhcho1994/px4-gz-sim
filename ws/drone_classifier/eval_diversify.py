@@ -18,12 +18,14 @@ import wandb
 
 sys.path.insert(0, str(Path(__file__).parent))
 from train_diversify import (
-    DiversifyFlight, DEVICE, REALFLIGHT_DIR,
-    compute_class_stats, calibrate_threshold, evaluate_realflight,
+    DiversifyFlight, DEVICE,
+    build_knn_bank, calibrate_threshold, evaluate_realflight,
     load_sitl_windows, _make_loader,
     PX4_FOLDER, ARDU_FOLDER,
     WANDB_PROJECT, _git_sha,
 )
+
+REALFLIGHT_DIR = Path(__file__).parent.parent.parent / "data/realflight"
 
 
 def main():
@@ -99,28 +101,29 @@ def main():
     cal_ds = load_sitl_windows(px4_files + ardu_files)
     cal_ld = _make_loader(cal_ds, shuffle=False)
 
-    # ── per-class Gaussian stats (μ, Σ⁻¹) ────────────────────────────────────
-    class_stats = compute_class_stats(model, cal_ld)
+    # ── kNN feature bank ─────────────────────────────────────────────────────
+    banks, _ = build_knn_bank(model, cal_ld)
 
     # ── threshold ────────────────────────────────────────────────────────────
     if args.threshold is not None:
         threshold = args.threshold
         print(f"Threshold: {threshold:.3f} (provided)")
     else:
-        threshold = calibrate_threshold(model, cal_ld, class_stats)
+        threshold = calibrate_threshold(model, cal_ld, banks)
 
     # ── evaluate real flights (suppress verbose processor logs) ──────────────
-    csv_files = [p for p in sorted(REALFLIGHT_DIR.glob("*.csv"))] #if "_raw" not in p.name]
+    csv_files = [p for p in sorted(REALFLIGHT_DIR.glob("*.csv"))
+                 if "_raw" not in p.name]
     print(f"\nEvaluating {len(csv_files)} real flight files  (threshold={threshold:.3f}) ...", flush=True)
     with open(os.devnull, "w") as devnull, \
          contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-        results = evaluate_realflight(model, csv_files, class_stats, threshold)
+        results = evaluate_realflight(model, csv_files, banks, threshold)
 
     # ── results table ────────────────────────────────────────────────────────
     COL = {"ArduPilot": "\033[94m", "PX4": "\033[91m", "Unknown": "\033[93m",
            "RESET": "\033[0m", "HEADER": "\033[1m"}
 
-    hdr = f"{'File':<52} {'Pred':>10}  {'PX4%':>6}  {'Maha²':>7}  {'Rej':>10}  {'Win':>5}"
+    hdr = f"{'File':<52} {'Pred':>10}  {'PX4%':>6}  {'kNN':>7}  {'Rej':>10}  {'Win':>5}"
     sep = "─" * len(hdr)
     print(f"\n{COL['HEADER']}{hdr}{COL['RESET']}")
     print(sep)
@@ -130,7 +133,7 @@ def main():
         rej   = f"{r['n_rejected']}/{r['n_windows']}({r['reject_rate']*100:.0f}%)"
         color = COL[pred]
         print(f"  {r['file']:<50}  {color}{pred:>10}{COL['RESET']}"
-              f"  {px4p:>6}  {r['maha_mean']:>7.2f}  {rej:>10}  {r['n_windows']:>5}")
+              f"  {px4p:>6}  {r['knn_dist']:>7.3f}  {rej:>10}  {r['n_windows']:>5}")
     print(sep)
 
     ardu    = sum(1 for r in results if r["prediction"] == "ArduPilot")
@@ -156,10 +159,10 @@ def main():
         "realflight/unknown":   unknown,
     })
     realflight_table = wandb.Table(
-        columns=["file", "prediction", "px4_prob", "maha_mean",
+        columns=["file", "prediction", "px4_prob", "knn_dist",
                  "n_windows", "n_accepted", "n_rejected", "n_px4",
                  "n_ardu", "reject_rate"],
-        data=[[r["file"], r["prediction"], r.get("px4_prob"), r["maha_mean"],
+        data=[[r["file"], r["prediction"], r.get("px4_prob"), r["knn_dist"],
                r["n_windows"], r["n_accepted"], r["n_rejected"],
                r["n_px4"], r["n_ardu"], r["reject_rate"]] for r in results],
     )

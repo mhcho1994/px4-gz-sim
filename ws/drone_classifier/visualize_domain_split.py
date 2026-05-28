@@ -36,7 +36,8 @@ import train_diversify as td
 
 SEED        = 42
 MAX_SITL    = 1500        # samples per SITL class
-MODEL_PATH  = "diversify_centerloss_20260518_1556.pt"
+# MODEL_PATH  = "diversify_centerloss_20260518_1556.pt"
+MODEL_PATH  = "diversify_feat7_20260528_1317.pt"
 OUT_PATH    = "domain_split_visualization.png"
 REALFLIGHT  = td.REALFLIGHT_DIR
 
