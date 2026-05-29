@@ -1,0 +1,48 @@
+program: train_diversify.py
+command:
+  - python3
+  - ${program}
+  - ${args}
+method: bayes
+
+# 단일 지표 최적화 대신 나중에 W&B 대시보드에서 
+# (acc/val 높음) + (ood/sitl_false_reject 낮음) 조합을 수동 필터링할 예정.
+metric:
+  name: acc/val
+  goal: maximize
+
+# Early terminate 제거 (유망주 보호)
+
+parameters:
+  # ── invariance knobs ─────────────────────────────────────────────────────────
+  alpha:
+    distribution: log_uniform_values
+    min: 0.1
+    max: 3.0
+
+  alpha1:
+    distribution: log_uniform_values
+    min: 0.1
+    max: 3.0
+
+  lam:
+    values: [0.0, 0.1, 0.3, 0.5, 1.0]
+
+  # ── domain structure ─────────────────────────────────────────────────────────
+  latent_domain_n:
+    values: [3, 5, 7, 10]
+
+  # ── discriminability knobs ───────────────────────────────────────────────────
+  lr_decay1:
+    # 0.01 쪽에 더 집중하도록 추가 (앞단 지우개 약화)
+    values: [0.005, 0.01, 0.05, 0.1, 0.3, 1.0]
+
+  lr:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.005
+
+  weight_decay:
+    distribution: log_uniform_values
+    min: 0.00001
+    max: 0.001

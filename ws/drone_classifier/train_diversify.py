@@ -626,16 +626,11 @@ def evaluate_realflight(model, csv_files, banks, threshold):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    global ALPHA, ALPHA1, LAM, LR, LATENT_DOMAIN_N, LR_DECAY1, LR_DECAY2, WEIGHT_DECAY
+
     torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    print(f"\n{'='*70}")
-    print(f"  DIVERSIFY  feat7@50Hz  2s-windows  ({ts})")
-    print(f"  WIN_LEN={WIN_LEN}  N_FEAT={N_FEAT}  BOTTLENECK={BOTTLENECK_DIM}")
-    print(f"  LATENT_K={LATENT_DOMAIN_N}  epochs={MAX_EPOCH}×{LOCAL_EPOCH}  lr={LR}")
-    print(f"  class: 0=ArduPilot  1=PX4")
-    print(f"  device: {DEVICE}")
-    print(f"{'='*70}\n")
 
     run = wandb.init(
         project=WANDB_PROJECT,
@@ -655,9 +650,27 @@ def main():
             "git_sha": _git_sha(),
         },
     )
-    # Snapshot all .py in this dir so the run is reproducible even with
-    # uncommitted changes in the working tree.
     run.log_code(str(Path(__file__).parent))
+
+    # ── allow sweep agent to override globals ─────────────────────────────────
+    cfg             = wandb.config
+    ALPHA           = cfg.get("alpha",           ALPHA)
+    ALPHA1          = cfg.get("alpha1",          ALPHA1)
+    LAM             = cfg.get("lam",             LAM)
+    LR              = cfg.get("lr",              LR)
+    LATENT_DOMAIN_N = cfg.get("latent_domain_n", LATENT_DOMAIN_N)
+    LR_DECAY1       = cfg.get("lr_decay1",       LR_DECAY1)
+    LR_DECAY2       = cfg.get("lr_decay2",       LR_DECAY2)
+    WEIGHT_DECAY    = cfg.get("weight_decay",    WEIGHT_DECAY)
+
+    print(f"\n{'='*70}")
+    print(f"  DIVERSIFY  feat7@50Hz  2s-windows  ({ts})")
+    print(f"  WIN_LEN={WIN_LEN}  N_FEAT={N_FEAT}  BOTTLENECK={BOTTLENECK_DIM}")
+    print(f"  LATENT_K={LATENT_DOMAIN_N}  epochs={MAX_EPOCH}×{LOCAL_EPOCH}  lr={LR}")
+    print(f"  alpha={ALPHA}  alpha1={ALPHA1}  lam={LAM}  lr_decay1={LR_DECAY1}")
+    print(f"  class: 0=ArduPilot  1=PX4")
+    print(f"  device: {DEVICE}")
+    print(f"{'='*70}\n")
 
     # ── train/test split ──────────────────────────────────────────────────────
     px4_files  = [(p, 1) for p in sorted(Path(PX4_FOLDER).glob("*.ulg"))]
