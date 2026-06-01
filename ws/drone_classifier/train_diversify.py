@@ -12,7 +12,6 @@ Strategy B : time-scale / agility invariance — kinematic features already hand
 """
 
 import os
-import subprocess
 import sys
 import json
 import random
@@ -61,6 +60,8 @@ BATCH_SIZE      = 128
 SEED            = 42
 MIN_WIN         = 30
 REALFLIGHT_DIR  = Path(__file__).parent.parent.parent / "data/realflight"
+OOD_PCTILE = 95   # 95th-percentile of SITL-val kNN distances → threshold
+KNN_K      = 5    # k-th nearest neighbor for OOD scoring
 
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda")
@@ -69,20 +70,9 @@ elif torch.backends.mps.is_available():
 else:
     DEVICE = torch.device("cpu")
 
-OOD_PCTILE = 95   # 95th-percentile of SITL-val kNN distances → threshold
-KNN_K      = 5    # k-th nearest neighbor for OOD scoring
 
 WANDB_PROJECT = "drone-firmware-classifier"
-
-
-def _git_sha():
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).parent, stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except Exception:
-        return None
+GIT_SHA       = None   # set by sweep_diversify._apply_sweep_config before each trial
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -626,8 +616,6 @@ def evaluate_realflight(model, csv_files, banks, threshold):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    global ALPHA, ALPHA1, LAM, LR, LATENT_DOMAIN_N, LR_DECAY1, LR_DECAY2, WEIGHT_DECAY
-
     torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -647,21 +635,10 @@ def main():
             "weight_decay": WEIGHT_DECAY, "beta1": BETA1,
             "batch_size": BATCH_SIZE, "seed": SEED, "min_win": MIN_WIN,
             "ood_pctile": OOD_PCTILE, "knn_k": KNN_K,
-            "git_sha": _git_sha(),
+            "git_sha": GIT_SHA,
         },
     )
     run.log_code(str(Path(__file__).parent))
-
-    # ── allow sweep agent to override globals ─────────────────────────────────
-    cfg             = wandb.config
-    ALPHA           = cfg.get("alpha",           ALPHA)
-    ALPHA1          = cfg.get("alpha1",          ALPHA1)
-    LAM             = cfg.get("lam",             LAM)
-    LR              = cfg.get("lr",              LR)
-    LATENT_DOMAIN_N = cfg.get("latent_domain_n", LATENT_DOMAIN_N)
-    LR_DECAY1       = cfg.get("lr_decay1",       LR_DECAY1)
-    LR_DECAY2       = cfg.get("lr_decay2",       LR_DECAY2)
-    WEIGHT_DECAY    = cfg.get("weight_decay",    WEIGHT_DECAY)
 
     print(f"\n{'='*70}")
     print(f"  DIVERSIFY  feat7@50Hz  2s-windows  ({ts})")
@@ -844,7 +821,6 @@ def main():
         type="model",
         metadata={
             "timestamp":         ts,
-            "git_sha":           _git_sha(),
             "best_val_acc":      best_val_acc,
             "best_test_acc":     best_test_acc,
             "ood_threshold":     threshold,
