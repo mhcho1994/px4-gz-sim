@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-REALFLIGHT_DIR = Path("/home/gayeonslee/FIRE/flightstack_sim/data/realflight")
+REALFLIGHT_DIR = Path(__file__).parent.parent.parent / "data/realflight"
 OUT_DIR        = Path("realflight_analysis")
 OUT_DIR.mkdir(exist_ok=True)
 
