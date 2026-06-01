@@ -17,13 +17,15 @@ import torch
 import wandb
 
 sys.path.insert(0, str(Path(__file__).parent))
+import train_diversify as _td
 from train_diversify import (
     DiversifyFlight, DEVICE,
     build_knn_bank, calibrate_threshold, evaluate_realflight,
     load_sitl_windows, _make_loader,
     PX4_FOLDER, ARDU_FOLDER,
-    WANDB_PROJECT, _git_sha,
+    WANDB_PROJECT,
 )
+from sweep_diversify import _git_sha
 
 REALFLIGHT_DIR = Path(__file__).parent.parent.parent / "data/realflight"
 
@@ -88,8 +90,11 @@ def main():
         run.log_code(str(Path(__file__).parent))
 
     # ── load model ───────────────────────────────────────────────────────────
+    sd = torch.load(model_path, map_location="cpu")
+    _td.LATENT_DOMAIN_N = sd["dclassifier.fc.weight"].shape[0]
+    print(f"Checkpoint LATENT_DOMAIN_N={_td.LATENT_DOMAIN_N}")
     model = DiversifyFlight().to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.load_state_dict(sd)
     model.eval()
 
     # ── build calibration set (SITL) ─────────────────────────────────────────
