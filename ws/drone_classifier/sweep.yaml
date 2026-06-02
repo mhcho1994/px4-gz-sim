@@ -4,6 +4,7 @@ command:
   - ${program}
   - ${args}
 method: bayes
+run_cap: 30
 
 # 단일 지표 최적화 대신 나중에 W&B 대시보드에서 
 # (acc/val 높음) + (ood/sitl_false_reject 낮음) 조합을 수동 필터링할 예정.

@@ -75,6 +75,16 @@ WANDB_PROJECT = "drone-firmware-classifier"
 GIT_SHA       = None   # set by sweep_diversify._apply_sweep_config before each trial
 
 
+def _filename_label(fname: str) -> str | None:
+    """Derive ground-truth autopilot label from CSV filename, or None if unknown."""
+    fl = fname.lower()
+    if "px4" in fl:
+        return "PX4"
+    if "ardu" in fl:
+        return "ArduPilot"
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Network modules
 # ══════════════════════════════════════════════════════════════════════════════
@@ -620,24 +630,30 @@ def main():
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
 
-    run = wandb.init(
-        project=WANDB_PROJECT,
-        name=f"diversify_feat7_{ts}",
-        job_type="train",
-        config={
-            "feat_hz": FEAT_HZ, "win_sec": WIN_SEC, "win_len": WIN_LEN,
-            "hop_len": HOP_LEN, "n_feat": N_FEAT, "num_classes": NUM_CLASSES,
-            "latent_domain_n": LATENT_DOMAIN_N, "bottleneck_dim": BOTTLENECK_DIM,
-            "dis_hidden": DIS_HIDDEN, "cnn_ch": CNN_CH,
-            "alpha": ALPHA, "alpha1": ALPHA1, "lam": LAM,
-            "local_epoch": LOCAL_EPOCH, "max_epoch": MAX_EPOCH,
-            "lr": LR, "lr_decay1": LR_DECAY1, "lr_decay2": LR_DECAY2,
-            "weight_decay": WEIGHT_DECAY, "beta1": BETA1,
-            "batch_size": BATCH_SIZE, "seed": SEED, "min_win": MIN_WIN,
-            "ood_pctile": OOD_PCTILE, "knn_k": KNN_K,
-            "git_sha": GIT_SHA,
-        },
-    )
+    _cfg = {
+        "feat_hz": FEAT_HZ, "win_sec": WIN_SEC, "win_len": WIN_LEN,
+        "hop_len": HOP_LEN, "n_feat": N_FEAT, "num_classes": NUM_CLASSES,
+        "latent_domain_n": LATENT_DOMAIN_N, "bottleneck_dim": BOTTLENECK_DIM,
+        "dis_hidden": DIS_HIDDEN, "cnn_ch": CNN_CH,
+        "alpha": ALPHA, "alpha1": ALPHA1, "lam": LAM,
+        "local_epoch": LOCAL_EPOCH, "max_epoch": MAX_EPOCH,
+        "lr": LR, "lr_decay1": LR_DECAY1, "lr_decay2": LR_DECAY2,
+        "weight_decay": WEIGHT_DECAY, "beta1": BETA1,
+        "batch_size": BATCH_SIZE, "seed": SEED, "min_win": MIN_WIN,
+        "ood_pctile": OOD_PCTILE, "knn_k": KNN_K,
+        "git_sha": GIT_SHA,
+    }
+    if wandb.run is None:
+        run = wandb.init(
+            project=WANDB_PROJECT,
+            name=f"diversify_feat7_{ts}",
+            job_type="train",
+            config=_cfg,
+        )
+    else:
+        # called from sweep agent — run already initialised, just sync config
+        run = wandb.run
+        wandb.config.update(_cfg, allow_val_change=True)
     run.log_code(str(Path(__file__).parent))
 
     print(f"\n{'='*70}")
@@ -793,7 +809,13 @@ def main():
     ardu    = sum(1 for r in results if r["prediction"] == "ArduPilot")
     px4     = sum(1 for r in results if r["prediction"] == "PX4")
     unknown = sum(1 for r in results if r["prediction"] == "Unknown")
-    print(f"\n  Total:{len(results)}  ArduPilot:{ardu}  PX4:{px4}  Unknown:{unknown}")
+
+    labeled = [(r, _filename_label(r["file"])) for r in results
+               if _filename_label(r["file"]) is not None]
+    correct  = sum(1 for r, gt in labeled if r["prediction"] == gt)
+    accuracy = correct / len(labeled) if labeled else 0.0
+    print(f"\n  Total:{len(results)}  ArduPilot:{ardu}  PX4:{px4}  Unknown:{unknown}"
+          f"  Accuracy:{correct}/{len(labeled)} ({accuracy*100:.1f}%)")
 
     out = f"diversify_feat7_realflight_{ts}.json"
     with open(out, "w") as f:
@@ -805,6 +827,9 @@ def main():
         "realflight/ardupilot": ardu,
         "realflight/px4":       px4,
         "realflight/unknown":   unknown,
+        "realflight/accuracy":  accuracy,
+        "realflight/correct":   correct,
+        "realflight/labeled":   len(labeled),
     })
     realflight_table = wandb.Table(
         columns=["file", "prediction", "px4_prob", "knn_dist",
