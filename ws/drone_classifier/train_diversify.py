@@ -64,6 +64,16 @@ REALFLIGHT_DIR  = Path(__file__).parent.parent.parent / "data/realflight"
 OOD_PCTILE = 95   # 95th-percentile of SITL-val kNN distances → threshold
 KNN_K      = 5    # k-th nearest neighbor for OOD scoring
 
+# ── Multiple Instance Learning (count-based MIL, Weidmann 2003; Foulds&Frank 2010)
+# A flight (bag) is classified only if enough windows (instances) pass the OOD gate
+# (= in-distribution / "valid features"); otherwise → Unknown.
+# Two AND-ed conditions:
+#   MIL_MIN_VALID : small absolute floor — need ≥N windows for any statistical decision
+#   MIL_MIN_FRAC  : elastic quorum that scales with flight length (the main criterion;
+#                   prevents short flights from being unfairly rejected by a fixed count)
+MIL_MIN_VALID = 3     # statistical floor (keep small; fraction does the real gating)
+MIL_MIN_FRAC  = 0.15  # require n_valid/n_total ≥ this (length-elastic quorum)
+
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda")
 elif torch.backends.mps.is_available():
@@ -581,11 +591,16 @@ def compute_rejection_rate(model, loader, banks, threshold):
 
 def evaluate_realflight(model, csv_files, banks, threshold):
     """
+    Count-based Multiple Instance Learning (Weidmann 2003; Foulds & Frank 2010).
+    Each flight is a bag; each window is an instance.
+
     For each real-flight CSV:
       1. window → bottleneck z
       2. kNN OOD score = distance to k-th nearest training neighbor
-      3. If score > threshold → Unknown; else classify as PX4 / ArduPilot
-      4. File verdict = majority vote across windows.
+      3. Instance is VALID (in-distribution) if score <= threshold
+      4. MIL quorum: assign a class only if n_valid >= MIL_MIN_VALID
+         (and n_valid/n_total >= MIL_MIN_FRAC); else → Unknown.
+      5. Among valid instances only, decide PX4 vs ArduPilot by majority.
     """
     model.eval()
     results = []
@@ -611,12 +626,16 @@ def evaluate_realflight(model, csv_files, banks, threshold):
             z_list     = model.extract_ood_features(X)      # [z_l1, z_bn]
             z_bn       = z_list[1]                           # bottleneck for classifier
             d          = _knn_score(z_list, banks)           # (N,)
-            mask       = (d <= threshold)
+            mask       = (d <= threshold)                    # valid (in-distribution) instances
             n_rej  = int((~mask).sum())
             n_acc  = int(mask.sum())
             d_mean = float(d.mean())
+            n_tot  = len(all_wins)
 
-            if n_acc == 0:
+            # ── count-based MIL quorum ────────────────────────────────────────
+            quorum_ok = (n_acc >= MIL_MIN_VALID) and (n_acc / n_tot >= MIL_MIN_FRAC)
+            if not quorum_ok:
+                # too few valid windows → not enough evidence to classify the bag
                 verdict, p_px4 = "Unknown", float("nan")
                 n_px4 = n_ardu = 0
             else:
@@ -624,11 +643,11 @@ def evaluate_realflight(model, csv_files, banks, threshold):
                 p_px4    = float(probs_in.mean())
                 n_px4    = int((probs_in > 0.5).sum())
                 n_ardu   = n_acc - n_px4
-                votes    = {"PX4": n_px4, "ArduPilot": n_ardu, "Unknown": n_rej}
-                verdict  = max(votes, key=votes.get)
+                # majority among VALID instances only (Unknown no longer competes)
+                verdict  = "PX4" if n_px4 >= n_ardu else "ArduPilot"
 
-            print(f"  {fname:<50s}  kNN={d_mean:.3f}  rej={n_rej}/{len(all_wins)}"
-                  f"({100*n_rej/len(all_wins):.0f}%)  → {verdict}")
+            print(f"  {fname:<50s}  kNN={d_mean:.3f}  valid={n_acc}/{n_tot}"
+                  f"({100*n_acc/n_tot:.0f}%)  → {verdict}")
             results.append({"file": fname, "prediction": verdict,
                 "px4_prob":    round(p_px4, 3) if not np.isnan(p_px4) else None,
                 "knn_dist":    round(d_mean, 4),
@@ -662,6 +681,7 @@ def main():
         "weight_decay": WEIGHT_DECAY, "beta1": BETA1,
         "batch_size": BATCH_SIZE, "seed": SEED, "min_win": MIN_WIN,
         "ood_pctile": OOD_PCTILE, "knn_k": KNN_K,
+        "mil_min_valid": MIL_MIN_VALID, "mil_min_frac": MIL_MIN_FRAC,
         "git_sha": GIT_SHA,
     }
     if wandb.run is None:
@@ -843,7 +863,8 @@ def main():
         json.dump(results, f, indent=2)
     print(f"  Results: {out}\n  Model:   {model_path}")
 
-    wandb.run.summary.update({
+    # log to history (so the sweep's Bayes optimizer reliably reads the metric)
+    wandb.log({
         "realflight/total":     len(results),
         "realflight/ardupilot": ardu,
         "realflight/px4":       px4,
@@ -852,11 +873,18 @@ def main():
         "realflight/correct":   correct,
         "realflight/labeled":   len(labeled),
     })
+    wandb.run.summary.update({
+        "realflight/accuracy":  accuracy,
+        "realflight/correct":   correct,
+        "realflight/labeled":   len(labeled),
+    })
     realflight_table = wandb.Table(
-        columns=["file", "prediction", "px4_prob", "knn_dist",
+        columns=["file", "ground_truth", "prediction", "correct", "px4_prob", "knn_dist",
                  "n_windows", "n_accepted", "n_rejected", "n_px4",
                  "n_ardu", "reject_rate"],
-        data=[[r["file"], r["prediction"], r.get("px4_prob"), r["knn_dist"],
+        data=[[r["file"], _filename_label(r["file"]) or "Unknown",
+               r["prediction"], _filename_label(r["file"]) == r["prediction"],
+               r.get("px4_prob"), r["knn_dist"],
                r["n_windows"], r["n_accepted"], r["n_rejected"],
                r["n_px4"], r["n_ardu"], r["reject_rate"]] for r in results],
     )

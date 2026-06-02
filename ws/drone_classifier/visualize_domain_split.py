@@ -18,6 +18,7 @@ Domain split visualization: (a) Initial vs (b) Our method (DIVERSIFY) vs (c) Pre
 
 import sys
 import random
+from datetime import datetime
 from pathlib import Path
 from collections import Counter
 
@@ -36,12 +37,48 @@ import train_diversify as td
 
 SEED        = 42
 MAX_SITL    = 1500        # samples per SITL class
-# MODEL_PATH  = "diversify_centerloss_20260518_1556.pt"
-MODEL_PATH  = "diversify_feat7_20260528_1317.pt"
-OUT_PATH    = "domain_split_visualization.png"
 REALFLIGHT  = td.REALFLIGHT_DIR
 
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
+
+
+# ── choose checkpoint ─────────────────────────────────────────────────────────
+def _select_checkpoint():
+    """CLI arg, else interactive picker over local diversify_*.pt files."""
+    if len(sys.argv) > 1:
+        p = Path(sys.argv[1])
+        if not p.exists():
+            raise FileNotFoundError(p)
+        return p
+
+    pts = sorted(Path(".").glob("diversify_feat7_*.pt"))
+    if not pts:
+        pts = sorted(Path(".").glob("diversify_*.pt"))
+    if not pts:
+        raise FileNotFoundError("No .pt checkpoint found. Pass path explicitly.")
+
+    print(f"\nAvailable checkpoints ({len(pts)}):")
+    for i, p in enumerate(pts):
+        print(f"  [{i}] {p.name}")
+    default_idx = len(pts) - 1
+    while True:
+        raw = input(f"Select checkpoint [0-{len(pts)-1}, default={default_idx}]: ").strip()
+        if raw == "":
+            return pts[default_idx]
+        try:
+            idx = int(raw)
+            if 0 <= idx < len(pts):
+                return pts[idx]
+        except ValueError:
+            pass
+        print("Invalid selection. Try again.")
+
+
+MODEL_PATH = _select_checkpoint()
+_ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUT_PATH   = f"domain_split_{MODEL_PATH.stem}_{_ts}.png"
+print(f"Model:  {MODEL_PATH}")
+print(f"Output: {OUT_PATH}")
 
 # real flight label mapping (by filename prefix)
 def _real_label(fname):
@@ -129,8 +166,11 @@ print("  done.")
 
 # ── 5. Load trained model ─────────────────────────────────────────────────────
 print(f"\nLoading model: {MODEL_PATH}")
+sd = torch.load(MODEL_PATH, map_location=td.DEVICE)
+td.LATENT_DOMAIN_N = sd["dclassifier.fc.weight"].shape[0]
+print(f"  LATENT_DOMAIN_N={td.LATENT_DOMAIN_N} (from checkpoint)")
 model = td.DiversifyFlight().to(td.DEVICE)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=td.DEVICE))
+model.load_state_dict(sd)
 model.eval()
 
 # ── 6. (b) Bottleneck features + pseudo-domain labels & Predictions ──────────
@@ -257,35 +297,34 @@ ax.set_title("(b) Our domain split (DIVERSIFY)", fontsize=13, fontweight="bold")
 ax.set_xlabel("t-SNE 1"); ax.set_ylabel("t-SNE 2")
 ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
 
-# ─── Panel (c): Predicted Classes [새로 추가된 그래프] ───
+# ─── Panel (c): True Classes ───
 ax = axes[2]
 ax.set_facecolor("#f8f8f8")
 
-# 모델 예측 결과용 색상 (Blue: ArduPilot, Red: PX4)
-PRED_COLORS = {0: "#2166ac", 1: "#d73027"}
+# 실제 정답(true class)용 색상 (Blue: ArduPilot, Red: PX4)
+CLASS_COLORS = {0: "#2166ac", 1: "#d73027"}
 
-for p_cls in [0, 1]:
-    for cls in [0, 1]:
-        # 예측(p_cls)된 색상, 실제 정답(cls)의 마커 모양
-        mask = (preds == p_cls) & (all_class == cls) & ~is_real
-        if mask.sum() == 0:
-            continue
-        ax.scatter(emb_b[mask, 0], emb_b[mask, 1],
-                   c=[PRED_COLORS[p_cls]], s=S_SMALL, marker=CLASS_MARKERS[cls],
-                   alpha=ALPHA_BG, linewidths=0, rasterized=True)
+for cls in [0, 1]:
+    # 실제 정답(cls)으로 색상 + 마커 모양 결정
+    mask = (all_class == cls) & ~is_real
+    if mask.sum() == 0:
+        continue
+    ax.scatter(emb_b[mask, 0], emb_b[mask, 1],
+               c=[CLASS_COLORS[cls]], s=S_SMALL, marker=CLASS_MARKERS[cls],
+               alpha=ALPHA_BG, linewidths=0, rasterized=True)
 
 for i in np.where(is_real)[0]:
-    p_cls = preds[i] # 예측값으로 색상 결정
+    t_cls = all_class[i] # 실제 정답(true label)으로 색상 결정
     ax.scatter(emb_b[i, 0], emb_b[i, 1],
-               c=[PRED_COLORS[p_cls]], s=S_REAL, marker="*",
+               c=[CLASS_COLORS[t_cls]], s=S_REAL, marker="*",
                edgecolors="black", linewidths=0.8, zorder=5)
 
-pred_patches = [
-    mpatches.Patch(color=PRED_COLORS[0], label="Pred: ArduPilot (Blue)"),
-    mpatches.Patch(color=PRED_COLORS[1], label="Pred: PX4 (Red)")
+class_patches = [
+    mpatches.Patch(color=CLASS_COLORS[0], label="True: ArduPilot (Blue)"),
+    mpatches.Patch(color=CLASS_COLORS[1], label="True: PX4 (Red)")
 ]
-ax.legend(handles=pred_patches + cls_handles, fontsize=8, loc="upper right", framealpha=0.9)
-ax.set_title("(c) Decision Boundaries (Predicted Class)", fontsize=13, fontweight="bold")
+ax.legend(handles=class_patches + cls_handles, fontsize=8, loc="upper right", framealpha=0.9)
+ax.set_title("(c) True Classes", fontsize=13, fontweight="bold")
 ax.set_xlabel("t-SNE 1"); ax.set_ylabel("t-SNE 2")
 ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
 

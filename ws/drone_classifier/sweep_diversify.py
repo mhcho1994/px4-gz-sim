@@ -58,31 +58,33 @@ SWEEP_CONFIG = {
     "method": "bayes",
     "run_cap": 100,
     "metric": {
-        "name": "acc/val",
+        "name": "realflight/accuracy",
         "goal": "maximize",
-        # W&B dashboard: filter manually on (acc/val high) + (ood/sitl_false_reject low)
+        # optimizes real-flight ArduPilot/PX4 accuracy directly (catches PX4 collapse
+        # that acc/val misses). Cross-check ood/sitl_false_reject on the dashboard.
     },
     "parameters": {
-        # invariance knobs
+        # invariance knobs — ranges lowered to fix PX4 collapse (ArduPilot signal
+        # was being erased by over-strong GRL). Weaker invariance = more discriminable.
         "alpha": {
             "distribution": "log_uniform_values",
-            "min": 0.1, "max": 3.0,
+            "min": 0.02, "max": 1.0,
         },
         "alpha1": {
             "distribution": "log_uniform_values",
-            "min": 0.1, "max": 3.0,
+            "min": 0.02, "max": 1.0,
         },
         "lam": {
             "values": [0.0, 0.1, 0.3, 0.5, 1.0],
         },
-        # domain structure
+        # domain structure (K=7,10 worked best; drop K=3 which collapsed hardest)
         "latent_domain_n": {
-            "values": [3, 5, 7, 10],
+            "values": [5, 7, 10],
         },
         # discriminability / featurizer knobs
         "lr_decay1": {
-            # 0.005–0.01 range emphasized: weakens the front-end eraser
-            "values": [0.005, 0.01, 0.05, 0.1, 0.3, 1.0],
+            # biased low: weak front-end eraser preserves class-discriminative features
+            "values": [0.005, 0.01, 0.02, 0.05, 0.1],
         },
         "lr": {
             "distribution": "log_uniform_values",
@@ -123,6 +125,15 @@ OOD_SWEEP_CONFIG = {
             "distribution": "int_uniform",
             "min": 1, "max": 30,
         },
+        # count-based MIL quorum
+        "mil_min_valid": {        # small absolute statistical floor
+            "distribution": "int_uniform",
+            "min": 1, "max": 5,
+        },
+        "mil_min_frac": {         # length-elastic quorum (main criterion)
+            "distribution": "uniform",
+            "min": 0.05, "max": 0.35,
+        },
     },
 }
 
@@ -143,6 +154,8 @@ def _apply_sweep_config():
     td.OOD_PCTILE      = cfg.get("ood_pctile",      td.OOD_PCTILE)
     td.KNN_K           = cfg.get("knn_k",           td.KNN_K)
     td.ATTN_HIDDEN     = cfg.get("attn_hidden",     td.ATTN_HIDDEN)
+    td.MIL_MIN_VALID   = cfg.get("mil_min_valid",   td.MIL_MIN_VALID)
+    td.MIL_MIN_FRAC    = cfg.get("mil_min_frac",    td.MIL_MIN_FRAC)
     td.GIT_SHA         = _git_sha()
 
 
@@ -231,8 +244,10 @@ def ood_trial(model_path: Path):
     wandb.init()
     cfg = wandb.config
 
-    td.OOD_PCTILE = int(cfg.ood_pctile)
-    td.KNN_K      = int(cfg.knn_k)
+    td.OOD_PCTILE    = int(cfg.ood_pctile)
+    td.KNN_K         = int(cfg.knn_k)
+    td.MIL_MIN_VALID = int(cfg.get("mil_min_valid", td.MIL_MIN_VALID))
+    td.MIL_MIN_FRAC  = float(cfg.get("mil_min_frac", td.MIL_MIN_FRAC))
 
     model = _load_model_cached(model_path)
 
@@ -261,6 +276,7 @@ def ood_trial(model_path: Path):
     accuracy = correct / len(labeled) if labeled else 0.0
 
     print(f"  pctile={td.OOD_PCTILE}  k={td.KNN_K}  "
+          f"mil={td.MIL_MIN_VALID}/{td.MIL_MIN_FRAC:.2f}  "
           f"acc={accuracy*100:.1f}% ({correct}/{len(labeled)})  "
           f"Ardu={ardu}  PX4={px4}  Unk={unknown}  "
           f"sitl_fr={sitl_fr*100:.1f}%  thr={threshold:.3f}")
@@ -275,6 +291,8 @@ def ood_trial(model_path: Path):
         "realflight/total":        total,
         "ood/threshold":           threshold,
         "ood/sitl_false_reject":   sitl_fr,
+        "mil/min_valid":           td.MIL_MIN_VALID,
+        "mil/min_frac":            td.MIL_MIN_FRAC,
     })
     wandb.run.summary.update({
         "realflight/accuracy":     accuracy,
