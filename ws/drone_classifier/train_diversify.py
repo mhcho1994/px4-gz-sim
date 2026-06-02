@@ -45,6 +45,7 @@ LATENT_DOMAIN_N = 5
 BOTTLENECK_DIM  = 32
 DIS_HIDDEN      = 64
 CNN_CH          = 128                      # final CNN channel count
+ATTN_HIDDEN     = 64                       # temporal attention hidden dim
 ALPHA           = 1.0
 ALPHA1          = 1.0
 LAM             = 0.0
@@ -99,7 +100,28 @@ class ReverseLayerF(Function):
     def backward(ctx, grad_output):
         return grad_output.neg() * ctx.alpha, None
 
+class TemporalAttentionPooling(nn.Module):
+    """
+    Learnable attention pooling over the temporal dimension.
+    Input: (B, C, T) → Output: (B, C)
+    """
+    def __init__(self, in_channels, hidden_dim= ATTN_HIDDEN):
+        super().__init__()
+        self.attention = nn.Sequential(
+            nn.Linear(in_channels, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 1)
+        )
 
+    def forward(self, x):
+        x = x.permute(0, 2, 1)  # (B, T, C)
+        attn_weights = self.attention(x)  # (B, T, 1)
+        attn_weights = F.softmax(attn_weights, dim=1)  # (B, T, 1)
+
+        out = (x * attn_weights).sum(dim=1)  # (B, C)
+        
+        return out, attn_weights
+    
 class FlightFeaturizer(nn.Module):
     """
     1D-CNN on fixed (B, N_FEAT, WIN_LEN) = (B, 7, 100) input.
@@ -124,20 +146,19 @@ class FlightFeaturizer(nn.Module):
             nn.Conv1d(64, CNN_CH, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm1d(CNN_CH), nn.ReLU(),
         )
-        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.attn_pool = TemporalAttentionPooling(CNN_CH)
         self.in_features = CNN_CH
 
     def forward(self, x):
-        # x: (B, N_FEAT, WIN_LEN)
         x = self.block3(self.block2(self.block1(x)))  # (B, CNN_CH, L')
-        return self.pool(x).squeeze(-1)               # (B, CNN_CH)
+        h, _ = self.attn_pool(x)                      # Attention Applied Pooling to get (B, CNN_CH)
+        return h                                      # (B, CNN_CH)
 
     def forward_features(self, x):
-        """Return intermediate feature maps for multi-level OOD scoring."""
-        f1 = self.block1(x)                           # (B, 32, 50)   shallow
-        f2 = self.block2(f1)                          # (B, 64, 25)   mid
-        f3 = self.block3(f2)                          # (B, 128, 25)
-        h  = self.pool(f3).squeeze(-1)                # (B, 128)
+        f1 = self.block1(x)
+        f2 = self.block2(f1)
+        f3 = self.block3(f2)
+        h, attn_weights = self.attn_pool(f3)          
         return f1, f2, h
 
 
@@ -634,7 +655,7 @@ def main():
         "feat_hz": FEAT_HZ, "win_sec": WIN_SEC, "win_len": WIN_LEN,
         "hop_len": HOP_LEN, "n_feat": N_FEAT, "num_classes": NUM_CLASSES,
         "latent_domain_n": LATENT_DOMAIN_N, "bottleneck_dim": BOTTLENECK_DIM,
-        "dis_hidden": DIS_HIDDEN, "cnn_ch": CNN_CH,
+        "dis_hidden": DIS_HIDDEN, "cnn_ch": CNN_CH, "attn_hidden": ATTN_HIDDEN,
         "alpha": ALPHA, "alpha1": ALPHA1, "lam": LAM,
         "local_epoch": LOCAL_EPOCH, "max_epoch": MAX_EPOCH,
         "lr": LR, "lr_decay1": LR_DECAY1, "lr_decay2": LR_DECAY2,

@@ -56,7 +56,7 @@ def _git_sha():
 # ── training sweep config ─────────────────────────────────────────────────────
 SWEEP_CONFIG = {
     "method": "bayes",
-    "run_cap": 30,
+    "run_cap": 100,
     "metric": {
         "name": "acc/val",
         "goal": "maximize",
@@ -99,19 +99,30 @@ SWEEP_CONFIG = {
         "knn_k": {
             "values": [3, 5, 10, 20],
         },
+        # attention pooling
+        "attn_hidden": {
+            "values": [32, 64, 128],
+        },
     },
 }
 
 # ── OOD-only sweep config ─────────────────────────────────────────────────────
 OOD_SWEEP_CONFIG = {
-    "method": "grid",
+    "method": "random",
+    "run_cap": 100,
     "metric": {
         "name": "realflight/accuracy",
         "goal": "maximize",
     },
     "parameters": {
-        "ood_pctile": {"values": [85, 90, 95, 97, 99]},
-        "knn_k":      {"values": [3, 5, 7, 10, 15, 20]},
+        "ood_pctile": {
+            "distribution": "int_uniform",
+            "min": 80, "max": 99,
+        },
+        "knn_k": {
+            "distribution": "int_uniform",
+            "min": 1, "max": 30,
+        },
     },
 }
 
@@ -131,6 +142,7 @@ def _apply_sweep_config():
     td.WEIGHT_DECAY    = cfg.get("weight_decay",    td.WEIGHT_DECAY)
     td.OOD_PCTILE      = cfg.get("ood_pctile",      td.OOD_PCTILE)
     td.KNN_K           = cfg.get("knn_k",           td.KNN_K)
+    td.ATTN_HIDDEN     = cfg.get("attn_hidden",     td.ATTN_HIDDEN)
     td.GIT_SHA         = _git_sha()
 
 
