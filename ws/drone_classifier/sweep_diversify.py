@@ -172,7 +172,7 @@ def fetch_best_model() -> Path:
     Last resort: most recent local diversify_feat7_*.pt file.
     """
     api    = wandb.Api()
-    entity = api.viewer["entity"]
+    entity = api.viewer.entity
     print(f"Querying W&B  {entity}/{td.WANDB_PROJECT} ...")
 
     runs = list(api.runs(
