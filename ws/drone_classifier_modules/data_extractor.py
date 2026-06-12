@@ -76,6 +76,13 @@ def parse_real_csv(csv_path, measurement_type='vision'):
             print(f"[Error] Unknown measurement_type: {measurement_type}")
             return None
         
+        # Remove rows with NaN values in any of the critical columns
+        valid_mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(z) & ~np.isnan(t_loc)
+        t_loc = t_loc[valid_mask]
+        x, y, z = x[valid_mask], y[valid_mask], z[valid_mask]
+        
+        if len(t_loc) < 10: return None
+        
         # Calculate Velocity (1st derivative)
         vx = np.gradient(x, t_loc)
         vy = np.gradient(y, t_loc)

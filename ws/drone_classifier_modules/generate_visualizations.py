@@ -10,9 +10,9 @@ import matplotlib.patches as mpatches
 import matplotlib
 matplotlib.use('Agg')
 
-# Import our new modular pipeline components instead of the old signal_processor
+
 from data_extractor import parse_px4_ulog, parse_ardu_bin, parse_real_csv
-from kinematic_processor import compute_kinematics, FEATURE_MAP
+from kinematic_processor_legacy import compute_kinematics, FEATURE_MAP     # Import the old signal_processor
 from flight_segmenter import extract_segments
 
 # =====================================================================
@@ -314,9 +314,11 @@ def main():
     # Example usage:
     # run_visualization_pipeline("sitl_logs", is_sitl=True)
     
-    run_visualization_pipeline("260417_flight_logs", is_sitl=False)
-    run_visualization_pipeline("260424_flight_logs", is_sitl=False)
-    run_visualization_pipeline("260501_flight_logs_old", is_sitl=False)
+    # run_visualization_pipeline("260417_flight_logs", is_sitl=False)
+    # run_visualization_pipeline("260424_flight_logs", is_sitl=False)
+    # run_visualization_pipeline("260501_flight_logs_old", is_sitl=False)
+    run_visualization_pipeline("260527_flight_logs_1", is_sitl=False)
+    run_visualization_pipeline("260527_flight_logs_2", is_sitl=False)
 
     print("\n[Success] All visualizations generated successfully.")
 
