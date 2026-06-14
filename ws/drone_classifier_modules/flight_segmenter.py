@@ -6,7 +6,7 @@ import numpy as np
 
 def _calculate_emission_probs(features, hover_thresh=0.5, pitch_takeoff=45.0, 
                               pitch_landing=-45.0, vz_takeoff=0.5, vz_landing=-0.5, 
-                              turn_sharpness=0.1):
+                              turn_sharpness=0.01):
     """
     Computes a soft probability distribution over 6 motion primitives.
     States: 0:Hovering, 1:Take-off, 2:Landing, 3:Straight, 4:Left_Turn, 5:Right_Turn
@@ -33,7 +33,7 @@ def _calculate_emission_probs(features, hover_thresh=0.5, pitch_takeoff=45.0,
             scores[2] = min(1.0, pitch / pitch_landing) * min(1.0, vz / vz_landing)
 
         # 4 & 5. Turn Left / Right Scores
-        turn_score = min(1.0, sharpness / (turn_sharpness * 2.0))
+        turn_score = min(1.0, sharpness / (turn_sharpness * 1.0))
         if direction > 0:
             scores[4] = turn_score
         else:
@@ -66,15 +66,15 @@ def _smooth_with_viterbi(emission_probs):
     #     [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
     #     [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
     # ])
-    A = np.array([
-        # Hov,  Tkf,  Lnd,  Str,   LT,   RT
-        [0.25, 0.15, 0.15, 0.15, 0.15, 0.15], # Hover
-        [0.15, 0.25, 0.15, 0.15, 0.15, 0.15], # Take-off
-        [0.15, 0.15, 0.25, 0.15, 0.15, 0.15], # Landing
-        [0.15, 0.15, 0.15, 0.25, 0.15, 0.15], # Straight
-        [0.15, 0.15, 0.15, 0.15, 0.25, 0.15], # Left_Turn
-        [0.15, 0.15, 0.15, 0.15, 0.15, 0.25]  # Right_Turn
-    ])
+    # A = np.array([
+    #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
+    #     [0.25, 0.15, 0.15, 0.15, 0.15, 0.15], # Hover
+    #     [0.15, 0.25, 0.15, 0.15, 0.15, 0.15], # Take-off
+    #     [0.15, 0.15, 0.25, 0.15, 0.15, 0.15], # Landing
+    #     [0.15, 0.15, 0.15, 0.25, 0.15, 0.15], # Straight
+    #     [0.15, 0.15, 0.15, 0.15, 0.25, 0.15], # Left_Turn
+    #     [0.15, 0.15, 0.15, 0.15, 0.15, 0.25]  # Right_Turn
+    # ])
     # A = np.array([
     #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
     #     [0.80, 0.20, 0.00, 0.00, 0.00, 0.00], # Hover
@@ -84,6 +84,15 @@ def _smooth_with_viterbi(emission_probs):
     #     [0.00, 0.00, 0.00, 0.25, 0.65, 0.10], # Left_Turn
     #     [0.00, 0.00, 0.00, 0.25, 0.10, 0.65]  # Right_Turn
     # ])
+    A = np.array([
+        # Hov,  Tkf,  Lnd,  Str,   LT,   RT
+        [0.70, 0.10, 0.10, 0.10, 0.00, 0.00], # Hover
+        [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
+        [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
+        [0.00, 0.00, 0.05, 0.65, 0.15, 0.15], # Straight
+        [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
+        [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
+    ])
     
     eps = 1e-10
     log_pi, log_A, log_B = np.log(pi + eps), np.log(A + eps), np.log(emission_probs + eps)
@@ -183,7 +192,7 @@ if __name__ == "__main__":
     import kinematic_processor
 
     # 1. Parse raw data
-    log_path = "./data/sitl_logs/run_012/ardu_logs/raw/logs/00000001.BIN"
+    log_path = "./data/sitl_logs/run_003/ardu_logs/raw/logs/00000001.BIN"
     print(f"[Info] Parsing raw flight data from:\n       {log_path}")
     raw_flight_data = data_extractor.parse_ardu_bin(log_path)
 

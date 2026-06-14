@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.interpolate import interp1d
 
-def compute_kinematics(raw_data, target_hz=50, window_sec=1.0, overlap_sec=0.8):
+def compute_kinematics(raw_data, target_hz=20, window_sec=2.0, overlap_sec=1):
     """
     Processes raw flight data to extract kinematic features using linear regression and PCA.
     Returns a dictionary of features for each sliding window.
@@ -9,8 +9,8 @@ def compute_kinematics(raw_data, target_hz=50, window_sec=1.0, overlap_sec=0.8):
     Parameters:
     - raw_data: Dictionary containing raw flight data with keys 't', 'x', 'y', 'z'
     - target_hz: Target sampling frequency (default: 50Hz)
-    - window_sec: Sliding window duration in seconds (default: 1.0s)
-    - overlap_sec: Overlap duration in seconds (default: 0.8s)
+    - window_sec: Sliding window duration in seconds (default: 2.0s)
+    - overlap_sec: Overlap duration in seconds (default: 1.5s)
 
     Returns:
     - Dictionary of extracted features for each sliding window
@@ -41,9 +41,9 @@ def compute_kinematics(raw_data, target_hz=50, window_sec=1.0, overlap_sec=0.8):
     z_interp = interp_z(t_interp)
 
     # [2] parameters for sliding window
-    window_size = int(target_hz * window_sec)         # 50Hz * 1.0s = 50 samples
-    overlap_size = int(target_hz * overlap_sec)       # 50Hz * 0.8s = 40 samples
-    stride = window_size - overlap_size               # Stride: 10 samples (0.2s)
+    window_size = int(target_hz * window_sec)         # 50Hz * 2.0s = 100 samples
+    overlap_size = int(target_hz * overlap_sec)       # 50Hz * 1.5s = 75 samples
+    stride = window_size - overlap_size               # Stride: 25 samples (0.5s)
     
     features = {
         't_window': [], 'vx_reg': [], 'vy_reg': [], 'vz_reg': [],
