@@ -57,6 +57,7 @@ class MissionState(Enum):
     UPLOADING_MISSION = auto()
     MISSION_UPLOADED = auto()
     SETTING_GUIDED = auto()    # Requesting GUIDED mode
+    WAITING_EKF = auto()        # Waiting for a stable position estimate
     ARMING = auto()            # Sending arm command
     ARMED = auto()             # Vehicle successfully armed
     TAKING_OFF = auto()
@@ -135,12 +136,12 @@ def _parse_connect_url(scn: Dict[str, Any]) -> str:
         # Scenario style: udp:127.0.0.1:14550
         if url.startswith("udp:"):
             hostport = url[len("udp:"):]
-            return f"udpin:{hostport}"
+            return f"udp:{hostport}"
 
         # Legacy style: udp://127.0.0.1:14550
         if url.startswith("udp://"):
             hostport = url[len("udp://"):]
-            return f"udpin:{hostport}"
+            return f"udp:{hostport}"
 
         # Already pymavlink-compatible
         if url.startswith(("udpin:", "udpout:", "tcp:", "tcpin:", "tcpout:", "serial:")):
@@ -301,6 +302,9 @@ class ArduPilotMissionRunner:
 
         # MAVLink connection handle
         self._m = None
+
+        # IMUs that have reported EKF GPS fusion via one-shot STATUSTEXT.
+        self._ekf_gps_fusion_imus: set[int] = set()
 
     def _set_status(
         self,
@@ -551,14 +555,14 @@ class ArduPilotMissionRunner:
                     #     print("[MISSION_UPLOAD] Mission accepted")
                     #     self._set_status(MissionState.MISSION_UPLOADED, "mission uploaded")
 
-                    print(
-                        f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
-                        f"type={ack_type}, sent={len(sent)}/{len(items)}"
-                    )
-                    if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
-                        return False
+                    # print(
+                    #     f"[MISSION_UPLOAD] Early or failed MISSION_ACK: "
+                    #     f"type={ack_type}, sent={len(sent)}/{len(items)}"
+                    # )
+                    # if ack_type != mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                    #     return False
 
-                    # # ACCEPTED가 너무 일찍 오면 stale ACK일 가능성이 있으므로 무시
+                    # receiving ACCEPTED too early -> ignore because it could be a stale ACK
                     # continue
 
         print("[MISSION_UPLOAD] Mission upload timeout")
@@ -600,8 +604,38 @@ class ArduPilotMissionRunner:
             text = text.decode(errors="ignore")
         return str(text).strip()
 
+    def _record_ekf_gps_fusion_text(self, text: str) -> bool:
+        """
+        Record one-shot EKF GPS fusion STATUSTEXT messages when they appear.
+
+        ArduPilot emits messages such as "EKF3 IMU0 is using GPS" early during
+        startup. Later phases should reuse this remembered fact instead of
+        waiting for the same STATUSTEXT to be emitted again.
+        """
+        t = text.lower()
+        if "is using gps" not in t:
+            return False
+
+        matched = False
+        for imu_idx in (0, 1):
+            if f"imu{imu_idx}" in t:
+                matched = True
+                if imu_idx not in self._ekf_gps_fusion_imus:
+                    self._ekf_gps_fusion_imus.add(imu_idx)
+                    print(f"[EKF_WAIT] remembered GPS fusion on IMU{imu_idx}")
+
+        return matched
+
+    def _format_ekf_gps_fusion_imus(self) -> str:
+        if not self._ekf_gps_fusion_imus:
+            return "none"
+        return ",".join(f"IMU{i}" for i in sorted(self._ekf_gps_fusion_imus))
+
     def _is_blocking_preflight_text(self, text: str) -> bool:
         t = text.lower()
+
+        if "is using gps" in t:
+            return False
 
         blocking_keywords = [
             "prearm:",
@@ -678,6 +712,7 @@ class ArduPilotMissionRunner:
         ekf_attitude_ok = False
         ekf_velocity_ok = False
         ekf_position_ok = False
+        ekf_ready = False
 
         last_error_text = None
         last_error_time = 0.0
@@ -727,6 +762,7 @@ class ArduPilotMissionRunner:
                 text = self._decode_statustext(msg)
                 if text:
                     print(f"[AP] {text}")
+                    self._record_ekf_gps_fusion_text(text)
 
                 if text and self._is_blocking_preflight_text(text):
                     last_error_text = text
@@ -743,13 +779,25 @@ class ArduPilotMissionRunner:
 
                 if now - ready_since >= stable_ready_s:
                     print("[MONITOR] vehicle ready to arm")
-                    print("[MONITOR] " f"prearm_ok={prearm_ok}, " f"ekf_ok={ekf_ready}, " f"last_error={last_error_text!r}")
+                    print(
+                        "[MONITOR] "
+                        f"prearm_ok={prearm_ok}, "
+                        f"ekf_ok={ekf_ready}, "
+                        f"gps_fusion_seen={self._format_ekf_gps_fusion_imus()}, "
+                        f"last_error={last_error_text!r}"
+                    )
                     return True
             else:
                 ready_since = None
 
         print("[MONITOR] ready-to-arm timeout")
-        print("[MONITOR] final state: " f"prearm_ok={prearm_ok}, " f"ekf_ok={ekf_ready}, " f"last_error={last_error_text!r}")        
+        print(
+            "[MONITOR] final state: "
+            f"prearm_ok={prearm_ok}, "
+            f"ekf_ok={ekf_ready}, "
+            f"gps_fusion_seen={self._format_ekf_gps_fusion_imus()}, "
+            f"last_error={last_error_text!r}"
+        )
         return False
 
     # def _wait_prearm_ok(self, m, timeout=60):
@@ -1060,6 +1108,107 @@ class ArduPilotMissionRunner:
             0, 0, 0, 0, 0
         )
 
+    def _wait_ekf_position_stable(
+        self,
+        m,
+        timeout: float = 30.0,
+        variance_threshold: float = 0.5,
+        stable_s: float = 3.0,
+    ) -> bool:
+        """
+        Wait until EKF reports usable horizontal position and stable variance.
+
+        This intentionally does not depend on STATUSTEXT messages such as
+        "EKF3 IMUx is using GPS" because those messages are one-shot and may
+        already have been consumed by an earlier readiness wait.
+        """
+        self._set_status(MissionState.WAITING_EKF, "waiting for stable EKF position")
+
+        print(
+            "[EKF_WAIT] GPS fusion already seen: "
+            f"{self._format_ekf_gps_fusion_imus()}"
+        )
+
+        self._request_message_interval(
+            m,
+            mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT,
+            5.0,
+        )
+
+        t0 = time.time()
+        stable_since = None
+        last_report_time = 0.0
+        last_flags = None
+        last_variance = None
+        last_text = None
+
+        while time.time() - t0 < timeout:
+            self._check_stop()
+
+            msg = m.recv_match(
+                type=["EKF_STATUS_REPORT", "STATUSTEXT"],
+                blocking=True,
+                timeout=1.0,
+            )
+
+            now = time.time()
+
+            if msg is None:
+                continue
+
+            if msg.get_type() == "STATUSTEXT":
+                text = self._decode_statustext(msg)
+                if text:
+                    last_text = text
+                    print(f"[EKF_WAIT] AP: {text}")
+                    self._record_ekf_gps_fusion_text(text)
+                continue
+
+            flags = msg.flags
+            last_flags = flags
+            last_variance = msg.pos_horiz_variance
+
+            attitude_ok = bool(flags & mavutil.mavlink.EKF_ATTITUDE)
+            velocity_ok = bool(flags & mavutil.mavlink.EKF_VELOCITY_HORIZ)
+            position_ok = bool(flags & mavutil.mavlink.EKF_POS_HORIZ_ABS)
+            variance_ok = last_variance < variance_threshold
+            ekf_ready = attitude_ok and velocity_ok and position_ok and variance_ok
+
+            if now - last_report_time >= 2.0:
+                print(
+                    "[EKF_WAIT] "
+                    f"att={attitude_ok} vel={velocity_ok} pos={position_ok} "
+                    f"variance={last_variance:.3f} "
+                    f"gps_fusion_seen={self._format_ekf_gps_fusion_imus()} "
+                    f"ready={ekf_ready}"
+                )
+                last_report_time = now
+
+            if ekf_ready:
+                if stable_since is None:
+                    stable_since = now
+                    print(
+                        f"[EKF_WAIT] stable candidate "
+                        f"(variance={last_variance:.3f}), waiting {stable_s:.0f}s"
+                    )
+                elif now - stable_since >= stable_s:
+                    print(
+                        f"[EKF_WAIT] position stable "
+                        f"(variance={last_variance:.3f}), proceeding to arm"
+                    )
+                    return True
+            else:
+                stable_since = None
+
+        print(
+            "[EKF_WAIT] timeout: "
+            f"last_flags={last_flags!r}, "
+            f"last_variance={last_variance!r}, "
+            f"gps_fusion_seen={self._format_ekf_gps_fusion_imus()}, "
+            f"last_text={last_text!r}"
+        )
+        return False
+
     def _wait_landed(
         self,
         m,
@@ -1207,7 +1356,6 @@ class ArduPilotMissionRunner:
                 f"target_component={m.target_component}"
             )
 
-
             # Wait for autopilot heartbeat
             self._wait_heartbeat(m)
 
@@ -1215,7 +1363,7 @@ class ArduPilotMissionRunner:
             self._check_stop()
 
             # Check readiness
-            # self._wait_prearm_ok(m)missio
+            # self._wait_prearm_ok(m)
             # self._wait_ekf_ready(m)
             self._wait_ready_to_arm(m)
 
@@ -1246,53 +1394,13 @@ class ArduPilotMissionRunner:
             # converge fast enough in simulation to pass the default checks.
             self._set_param(m, 'ARMING_CHECK', 0)
 
-            # Wait until EKF GPS fusion is active on both IMUs AND position
-            # variance is stable. ArduPilot's hardcoded arm-time check
-            # 'Need Position Estimate' fires even with ARMING_CHECK=0 until
-            # the EKF reports 'IMUx is using GPS' — that is the signal that
-            # GPS fusion is complete and position estimate is trustworthy.
-            VAR_THRESHOLD = 0.5
-            STABLE_S = 3.0
-            ekf_timeout = 90.0
-            gps_fusion_count = 0  # number of IMUs confirmed using GPS
-            stable_since = None
-            t_ekf = time.time()
-            while time.time() - t_ekf < ekf_timeout:
-                msg = m.recv_match(
-                    type=["EKF_STATUS_REPORT", "STATUSTEXT"],
-                    blocking=True,
-                    timeout=1.0,
-                )
-                if msg is None:
-                    continue
-
-                if msg.get_type() == "STATUSTEXT":
-                    text = self._decode_statustext(msg)
-                    if text:
-                        print(f"[EKF_WAIT] AP: {text}")
-                    if "is using gps" in text.lower():
-                        gps_fusion_count += 1
-                        print(f"[EKF_WAIT] GPS fusion active ({gps_fusion_count} IMU(s))")
-                    continue
-
-                if gps_fusion_count == 0:
-                    continue  # don't check variance until GPS fusion is active
-
-                variance = msg.pos_horiz_variance
-                now = time.time()
-                if variance < VAR_THRESHOLD:
-                    if stable_since is None:
-                        stable_since = now
-                        print(f"[EKF_WAIT] pos_horiz_variance={variance:.3f} — waiting {STABLE_S:.0f}s for stability")
-                    elif now - stable_since >= STABLE_S:
-                        print(f"[EKF_WAIT] position stable (variance={variance:.3f}), proceeding to arm")
-                        break
-                else:
-                    if stable_since is not None:
-                        print(f"[EKF_WAIT] variance spiked to {variance:.3f}, resetting")
-                    stable_since = None
-            else:
-                raise RuntimeError(f"EKF GPS fusion did not complete within {ekf_timeout:.0f}s")
+            if not self._wait_ekf_position_stable(
+                m,
+                timeout=30.0,
+                variance_threshold=0.8,
+                stable_s=3.0,
+            ):
+                raise RuntimeError("EKF position estimate did not become stable")
 
             self._arm(m)
 

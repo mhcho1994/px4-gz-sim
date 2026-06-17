@@ -834,7 +834,7 @@ def _collect_px4_logs(px4_dir: Path, run_dir: Path):
     bool
         True if a .ulg file was successfully collected, False otherwise.
     """
-    dst_root = run_dir / "px4_logs" / "raw"
+    dst_root = run_dir
     dst_root.mkdir(parents=True, exist_ok=True)
 
     sitl_log = dst_root / "sitl.log"
@@ -871,7 +871,7 @@ def _collect_px4_logs(px4_dir: Path, run_dir: Path):
 
 
 def _cleanup_failed_ulg(run_dir: Path):
-    raw_dir = run_dir / "px4_logs" / "raw"
+    raw_dir = run_dir
     if not raw_dir.exists():
         return
 
@@ -945,7 +945,7 @@ def _prepare_run_dir(run_dir: Path, force: bool) -> bool:
         True  -> skip
         False -> run
     """
-    logs_dir = run_dir / "px4_logs" / "raw"
+    logs_dir = run_dir / "px4_logs"
     ulg_files = list(logs_dir.rglob("*.ulg")) if logs_dir.exists() else []
 
     # case 1: force → always clean up and run
@@ -1036,7 +1036,7 @@ def main() -> int:
             continue
 
         # Create output directory for this run
-        logs_root = run_dir / "px4_logs" / "raw"
+        logs_root = run_dir / "px4_logs"
         logs_root.mkdir(parents=True, exist_ok=True)
 
         # Get scenario path
@@ -1089,13 +1089,13 @@ def main() -> int:
 
             # Attempt to collect logs from PX4 SITL build directory based on sitl.log output and 
             # check if .ulg file is successfully moved to run_dir. If not, retry the run up to 3 times.
-            success_log = _collect_px4_logs(cfg.px4_dir, run_dir)
+            success_log = _collect_px4_logs(cfg.px4_dir, logs_root)
             
             if rc == 0 and success_log:
                 break
 
             # delete failed logs to avoid confusion in the next attempt
-            _cleanup_failed_ulg(run_dir)
+            _cleanup_failed_ulg(logs_root)
 
             # timeout retry
             if rc == 124:

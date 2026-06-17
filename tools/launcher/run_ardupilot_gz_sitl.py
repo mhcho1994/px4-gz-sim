@@ -39,6 +39,7 @@ import yaml
 import math
 import shutil
 import re
+import platform
 
 _THIS_FILE = Path(__file__).resolve()
 _TOOLS_DIR = _THIS_FILE.parents[1]
@@ -406,17 +407,60 @@ def _run_sitl_cmd(vehicle: str, frame: str, model: str, instance: int, gcs_outpo
       - `--no-rebuild` makes repeated runs faster.
       Use custom locations.txt file for reading spawning locations
     """
-    return [
-        "sim_vehicle.py",
-        "-v", f"{vehicle}",
-        "-f", f"{frame}",
-        "--model", f"{model}",
-        "--no-rebuild",
-        "-I", str(instance),
-        f"--location={location}",
-        f"--out=udp:127.0.0.1:{str(gcs_outport)}",
-        # f"--out={mavlink_url}",
-    ]
+    if 'microsoft-standard-WSL2' in platform.release():
+        return [
+            "sim_vehicle.py",
+            "-v", f"{vehicle}",
+            "-f", f"{frame}",
+            "--model", f"{model}",
+            "--no-rebuild",
+            "-I", str(instance),
+            f"--location={location}",
+            f"--out={mavlink_url}",
+            f"--out={_get_gcs_url(gcs_outport)}",
+        ]
+
+    else:
+        return [
+            "sim_vehicle.py",
+            "-v", f"{vehicle}",
+            "-f", f"{frame}",
+            "--model", f"{model}",
+            "--no-rebuild",
+            "-I", str(instance),
+            f"--location={location}",
+            f"--out={_get_gcs_url(gcs_outport)}",
+        ]
+
+
+def _get_gcs_url(gcs_outport: int) -> str:
+    """
+    Return the default MAVProxy output URL for forwarding MAVLink traffic
+    to a local GCS listener.
+
+    The GCS is expected to listen on ``127.0.0.1:<gcs_outport>``, and
+    MAVProxy/sim_vehicle.py sends traffic using the ``udp:<host>:<port>``
+    URL format.
+    """
+    return f"udp:127.0.0.1:{gcs_outport}"
+
+
+def _apply_headless_terminal_env(env: dict[str, str]) -> dict[str, str]:
+    """
+    Prevent ArduPilot's run_in_terminal_window.sh from opening UI terminals.
+
+    An empty DISPLAY makes the script skip xterm/GUI terminals and fall back to
+    logging the SITL process to /tmp/<name>.log. The tmux/screen/zellij vars are
+    removed for this child process so headless runs do not create terminal panes.
+    """
+    env = env.copy()
+    env["DISPLAY"] = ""
+    env.pop("WAYLAND_DISPLAY", None)
+    env.pop("SITL_RITW_TERMINAL", None)
+    env.pop("TMUX", None)
+    env.pop("STY", None)
+    env.pop("ZELLIJ", None)
+    return env
 
 
 def _run_mavproxy_cmd(out_port: int, headless: bool = False) -> list[str]:
@@ -600,7 +644,7 @@ def run_once(
         current["gz"] = gz
 
     # GCS (MAVProxy Console and Map) second
-    if (not headless) and current.get("gcs") is None:
+    if current.get("gcs") is None:
         time.sleep(startup_delay_s)
         print(f"[INFO] Waiting {startup_delay_s:.1f}s for GCS to initialize...")
 
@@ -625,6 +669,9 @@ def run_once(
 
         gz_env = os.environ.copy()
         gz_env["ARDUPILOT_LOCATIONS"] = str(locations_path)
+
+        if headless:
+            gz_env = _apply_headless_terminal_env(gz_env)
 
         sitl = _popen("sitl", _run_sitl_cmd(vehicle, frame, model, instance, gcs_outport, mavlink_url, location), cwd=logs_dir, log_path=sitl_log, env=gz_env)
         current["sitl"] = sitl
@@ -706,7 +753,7 @@ def _check_ardupilot_logs(run_dir: Path) -> bool:
         True if the logs directory exists and contains at least one `.BIN` file,
         False otherwise.
     """
-    raw_root = run_dir / "ardu_logs" / "raw"
+    raw_root = run_dir
     logs_dir = raw_root / "logs"
 
     if not raw_root.exists():
@@ -732,7 +779,7 @@ def _check_ardupilot_logs(run_dir: Path) -> bool:
 
 
 def _cleanup_failed_bin(run_dir: Path):
-    raw_dir = run_dir / "ardu_logs" / "raw" / "logs"
+    raw_dir = run_dir
     if not raw_dir.exists():
         return
 
@@ -799,7 +846,7 @@ def _iter_run_dirs(data_root: Path) -> list[Path]:
     return sorted([p for p in data_root.iterdir() if p.is_dir() and p.name.startswith("run_")])
 
 
-def _prepare_run_dir(run_dir: Path, force: bool) -> bool:
+def _prepare_run_dir(run_dir: Path, force: bool) -> tuple[bool, Path]:
     """
     Decide whether to skip or run.
     
@@ -807,7 +854,7 @@ def _prepare_run_dir(run_dir: Path, force: bool) -> bool:
         True  -> skip
         False -> run
     """
-    logs_dir = run_dir / "ardu_logs" / "raw"
+    logs_dir = run_dir / "ardu_logs"
     bin_files = list(logs_dir.rglob("*.BIN")) if logs_dir.exists() else []
 
     # case 1: force → always clean up and run
@@ -815,14 +862,14 @@ def _prepare_run_dir(run_dir: Path, force: bool) -> bool:
         if (run_dir / "ardu_logs").exists():
             print(f"[CLEAN] Removing existing logs in {run_dir}")
             shutil.rmtree(run_dir / "ardu_logs")
-        return False
+        return False, logs_dir
 
     # case 2: valid log exists → skip
     if logs_dir.exists() and len(bin_files) > 0:
-        return True
+        return True, logs_dir
 
     # case 3: no log → run
-    return False
+    return False, logs_dir
 
 
 def _apply_cli_overrides(cfg: ArdupilotScenarioConfig, args: argparse.Namespace) -> ArdupilotScenarioConfig:
@@ -884,7 +931,9 @@ def main() -> int:
             print("Interrupted. Exiting.")
             return 130
 
-        if _prepare_run_dir(run_dir, force=args.force):
+        # Check/Create output directory for this run
+        skip, logs_dir = _prepare_run_dir(run_dir, force=args.force)
+        if skip:
             print(f"[SKIP] {run_dir} (ardu_logs exists and contains .BIN)")
             continue
 
@@ -895,10 +944,6 @@ def main() -> int:
             print(f"[ERROR] {run_dir}: failed to load scenario.yaml: {e}")
             overall_rc = 2
             continue
-
-        # Create output directory for this run
-        logs_root = run_dir / "ardu_logs" / "raw"
-        logs_root.mkdir(parents=True, exist_ok=True)
 
         # Get scenario path
         scenario_path = run_dir / "scenario.yaml"
@@ -915,7 +960,7 @@ def main() -> int:
         print(f"  world={cfg.world} location={cfg.location}")
         print(f"  instance={cfg.instance} gcs_outport={cfg.gcs_outport}")
         print(f"  startup_delay={cfg.startup_delay_s} max_run_s={cfg.max_run_s} max_retries={cfg.max_retries}")
-        print(f"  logs_root={logs_root} scenario_path={scenario_path} mavlink_url={cfg.mavlink_url}")
+        print(f"  logs_root={logs_dir} scenario_path={scenario_path} mavlink_url={cfg.mavlink_url}")
 
         # Execute the scenario
         rc = 1
@@ -930,7 +975,7 @@ def main() -> int:
                 ardupilot_dir=cfg.ardupilot_dir,
                 instance=cfg.instance,
                 scenario_path=scenario_path,
-                logs_dir=logs_root,
+                logs_dir=logs_dir,
                 gcs_outport=cfg.gcs_outport,
                 mavlink_url=cfg.mavlink_url,
                 startup_delay_s=cfg.startup_delay_s,
@@ -947,13 +992,13 @@ def main() -> int:
             )
 
             # Attempt to check logs from Ardupilot SITL
-            success_log = _check_ardupilot_logs(run_dir)
+            success_log = _check_ardupilot_logs(logs_dir)
 
             if rc == 0 and success_log:
                 break
 
             # delete failed logs to avoid confusion in the next attempt
-            _cleanup_failed_bin(run_dir)
+            _cleanup_failed_bin(logs_dir)
 
             # timeout retry
             if rc == 124:
@@ -969,7 +1014,7 @@ def main() -> int:
 
             # last attempt
             if attempt == cfg.max_retries:
-                print(f"[ERROR] Failed to run and collect logsafter {attempt} attempts")
+                print(f"[ERROR] Failed to run and collect logs after {attempt} attempts")
                 rc = max(rc, 1)
 
         overall_rc = max(overall_rc, 1 if rc != 0 else 0)

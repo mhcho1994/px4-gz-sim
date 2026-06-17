@@ -197,7 +197,7 @@ def make_turn_3pts(
     # ------------------------------------------------------------------
     commands: List[int] = [
         MAV_CMD_NAV_TAKEOFF,      # idx 0
-        MAV_CMD_NAV_WAYPOINT,     # idx 1: P1
+        # MAV_CMD_NAV_WAYPOINT,     # idx 1: P1
         MAV_CMD_DO_CHANGE_SPEED,  # idx 2
         MAV_CMD_NAV_WAYPOINT,     # idx 3: P2
         MAV_CMD_NAV_WAYPOINT,     # idx 4: P3
@@ -207,7 +207,7 @@ def make_turn_3pts(
 
     waypoints_ned: List[Optional[NED]] = [
         None,   # TAKEOFF (we keep it None to avoid forcing fake points)
-        P1,     # WP
+        # P1,     # WP
         None,   # DO_CHANGE_SPEED
         P2,     # WP
         P3,     # WP
@@ -217,7 +217,7 @@ def make_turn_3pts(
 
     waypoints_lla: List[Optional[LLA]] = [
         None,
-        ned_to_lla(P1, home),
+        # ned_to_lla(P1, home),
         None,
         ned_to_lla(P2, home),
         ned_to_lla(P3, home),
@@ -227,7 +227,7 @@ def make_turn_3pts(
 
     speeds: List[Optional[float]] = [
         None,        # TAKEOFF
-        None,        # WP P1
+        # None,        # WP P1
         speed_m_s,   # DO_CHANGE_SPEED
         None,        # WP P2
         None,        # WP P3
@@ -513,6 +513,142 @@ def write_scenario_yaml(
     )
 
 
+def write_metadata_yaml(outdir: Path, args: argparse.Namespace) -> None:
+    """
+    Write dataset-level metadata.yaml at the root of the SITL log directory.
+    """
+
+    pattern_ranges = {
+        "turn3pts": {
+            "settle_m": {"default": 10.0},
+            "leg1_m": {"default": 50.0},
+            "leg2_m": {"default": 50.0},
+            "turn_deg": {
+                "default": 90.0,
+                "random_range": [0.0, 360.0],
+                "unit": "deg",
+            },
+            "alt_m": {
+                "default": 10.0,
+                "random_range": [5.0, 50.0],
+                "unit": "m",
+            },
+            "speed_m_s": {"default": 6.0, "unit": "m/s"},
+        },
+        "quad4pts": {
+            "settle_m": {
+                "default": 10.0,
+                "random_range": [5.0, 20.0],
+                "unit": "m",
+            },
+            "side1_m": {
+                "default": 50.0,
+                "random_range": [30.0, 120.0],
+                "unit": "m",
+            },
+            "side2_m": {
+                "default": 50.0,
+                "random_range": [30.0, 120.0],
+                "unit": "m",
+            },
+            "angle_deg": {
+                "default": 90.0,
+                "random_range": [45.0, 135.0],
+                "unit": "deg",
+            },
+            "alt_m": {
+                "default": 10.0,
+                "random_range": [5.0, 50.0],
+                "unit": "m",
+            },
+            "speed_m_s": {
+                "default": 6.0,
+                "random_range": [3.0, 12.0],
+                "unit": "m/s",
+            },
+        },
+    }
+
+    current_pattern_parameters = {}
+
+    if args.pattern == "turn3pts":
+        current_pattern_parameters = {
+            "settle_m": args.settle_m,
+            "leg1_m": args.leg1_m,
+            "leg2_m": args.leg2_m,
+            "turn_deg": args.turn_deg,
+            "alt_m": args.alt_m,
+            "speed_m_s": args.speed_m_s,
+            "land": args.land,
+        }
+
+    elif args.pattern == "quad4pts":
+        current_pattern_parameters = {
+            "settle_m": args.settle_m,
+            "side1_m": args.side1_m,
+            "side2_m": args.side2_m,
+            "angle_deg": args.angle_deg,
+            "alt_m": args.alt_m,
+            "speed_m_s": args.speed_m_s,
+            "land": args.land,
+        }
+
+    metadata = {
+        "dataset": {
+            "name": "sitl_logs",
+            "description": (
+                "SITL log dataset generated for comparing PX4 and ArduPilot "
+                "under the same mission/trajectory setting."
+            ),
+            "num_runs": int(args.runs),
+            "selected_pattern": args.pattern,
+        },
+        "patterns": {
+            "selected": {
+                "name": args.pattern,
+                "parameters": current_pattern_parameters,
+            },
+            "available": pattern_ranges,
+        },
+        "simulation": {
+            "environment": "Gazebo",
+            "home_lla": [float(v) for v in args.home_lla],
+        },
+        "flight_stacks": {
+            "px4": {
+                "firmware": "PX4",
+                "vehicle_model": "x500",
+                "frame": args.px4_frame,
+                "world": args.px4_world,
+                "location": args.px4_location,
+                "parameters": "default",
+                "log_format": ".ulg",
+            },
+            "ardupilot": {
+                "firmware": "ArduPilot",
+                "vehicle": args.ardupilot_vehicle,
+                "vehicle_model": "iris",
+                "frame": args.ardupilot_frame,
+                "model": args.ardupilot_model,
+                "world": args.ardupilot_world,
+                "location": args.ardupilot_location,
+                "parameters": "default",
+                "log_format": ".BIN",
+            },
+        },
+        "notes": [
+            "metadata.yaml stores dataset-level information shared across all runs.",
+            "Each run directory contains a scenario.yaml file.",
+            "scenario.yaml stores run-specific mission geometry and autopilot launch settings.",
+            "If a parameter value is 'random', the actual sampled value is stored in each run_XXX/scenario.yaml.",
+        ],
+    }
+
+    (outdir / "metadata.yaml").write_text(
+        yaml.safe_dump(metadata, sort_keys=False),
+        encoding="utf-8",
+    )
+
 # ----------------------------------------------------------------------
 # Main Entry
 # ----------------------------------------------------------------------
@@ -648,6 +784,11 @@ def main() -> int:
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------------------
+    # Parse CLI arguments
+    # --------------------------------------------------------------
+    write_metadata_yaml(args.outdir, args)
+
+    # --------------------------------------------------------------
     # Generate runs
     # --------------------------------------------------------------
     for i in range(args.runs):
@@ -661,7 +802,7 @@ def main() -> int:
                 turn_deg = float(args.turn_deg)
 
             if args.alt_m == "random":
-                alt_m = float(np.random.uniform(0.1, 3.0))
+                alt_m = float(np.random.uniform(5.0, 50.0))
             else:                
                 alt_m = float(args.alt_m)  
 
@@ -702,13 +843,13 @@ def main() -> int:
             )
 
             alt_m = (
-                float(np.random.uniform(0.1, 3.0))
+                float(np.random.uniform(5.0, 50.0))
                 if args.alt_m == "random"
                 else float(args.alt_m)
             )
 
             speed_m_s = (
-                float(np.random.uniform(0.5, 3.0))
+                float(np.random.uniform(3.0, 12.0))
                 if args.speed_m_s == "random"
                 else float(args.speed_m_s)
             )
