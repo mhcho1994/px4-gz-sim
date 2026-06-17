@@ -7,11 +7,17 @@
       "request": "launch",
       "program": "${workspaceFolder}/tools/scenario/scenario_generator.py",
       "args": [
-        "turn3pts",
+        "three_d_n_pts",
         "--outdir", "${workspaceFolder}/data/sitl_logs",
-        "--runs", "250",
-        "--turn-deg", "random",
-        "--alt-m", "random",
+        "--runs", "1",
+        "--start-run-id", "0",
+        "--n", "10",
+        "--edge-m", "random", "--edge-m-range", "2", "10",
+        "--vertex-deg", "random", "--vertex-deg-range", "0", "360",
+        "--speed-m-s", "random", "--speed-m-s-range", "1", "10",
+        "--alt-m", "random", "--alt-m-range", "2", "20",
+        "--takeoff-alt-m", "10",
+        "--landing-alt-m", "5"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -29,6 +35,7 @@
       "program": "${workspaceFolder}/tools/launcher/run_px4_gz_sitl.py",
       "args": [
         "--run-root", "${workspaceFolder}/data/sitl_logs",
+        "--force",
         "--startup-delay", "2",
         "--max-run-s", "300",
         "--verbose", "--headless",
@@ -49,6 +56,7 @@
       "program": "${workspaceFolder}/tools/launcher/run_ardupilot_gz_sitl.py",
       "args": [
         "--run-root", "${workspaceFolder}/data/sitl_logs",
+        "--force",
         "--startup-delay", "2",
         "--max-run-s", "300",
         "--verbose", "--headless",
@@ -175,5 +183,27 @@
         "PYTHONUNBUFFERED": "1"
       }
     },
+    {
+      "name": "Debug: Trajectory Processing Pipeline",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "program": "${workspaceFolder}/ws/trajectory_processing/run_traj_proc_pipeline.py",
+      "args": [
+        "--data-root", "${workspaceFolder}/data",
+        "--log-dirs", "260428_sitl_logs",
+        "--split",
+        "--split-ratio", "0.7", "0.15", "0.15",
+
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+
   ]
 }

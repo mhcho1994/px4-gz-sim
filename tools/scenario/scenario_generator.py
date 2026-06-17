@@ -45,6 +45,13 @@ LLA = Tuple[float, float, float]
 # NOTE:
 # Specify waypoint speed in m/s (float) for each waypoint
 SPD = float
+RANDOM_SPEC = "random"
+
+DEFAULT_EDGE_RANGE_M = (30.0, 120.0)
+DEFAULT_VERTEX_RANGE_DEG = (0.0, 360.0)
+DEFAULT_ALT_RANGE_M = (5.0, 50.0)
+DEFAULT_SPEED_RANGE_M_S = (3.0, 12.0)
+DEFAULT_LANDING_ALT_M = 5.0
 
 # ----------------------------------------------------------------------
 # MAVLink Command IDs
@@ -105,6 +112,35 @@ def ned_to_lla(ned: NED, home_lla: LLA) -> LLA:
     return (float(np.degrees(lat)), float(np.degrees(lon)), float(alt_rel))
 
 
+def _range_to_list(value_range: Tuple[float, float]) -> List[float]:
+    return [float(value_range[0]), float(value_range[1])]
+
+
+def _metadata_value(value, value_range: Tuple[float, float]):
+    if value == RANDOM_SPEC:
+        return {
+            "mode": "random_uniform",
+            "range": _range_to_list(value_range),
+        }
+    if isinstance(value, tuple):
+        return [float(v) for v in value]
+    return float(value)
+
+
+def _sample_tuple_spec(value, count: int, value_range: Tuple[float, float]) -> Tuple[float, ...]:
+    if value == RANDOM_SPEC:
+        low, high = value_range
+        return tuple(float(v) for v in np.random.uniform(low, high, size=count))
+    return tuple(float(v) for v in value)
+
+
+def _sample_float_spec(value, value_range: Tuple[float, float]) -> float:
+    if value == RANDOM_SPEC:
+        low, high = value_range
+        return float(np.random.uniform(low, high))
+    return float(value)
+
+
 # ----------------------------------------------------------------------
 # Mission Specification Container
 # ----------------------------------------------------------------------
@@ -128,255 +164,224 @@ class MissionSpec:
       - speed_m_s is only meaningful for DO_CHANGE_SPEED; otherwise None.
     """
     name: str
-    home_position: List[LLA]    # list of home positions (lat, lon, alt) for each run
+    home_position: LLA          # home position (lat, lon, alt)
     command: List[int]          # list of MAVLink command IDs for each waypoint
     takeoff_alt_m: float        # takeoff altitude (positive above home)
+    landing_alt_m: float        # final approach altitude above home before LAND
     waypoints_ned: List[Optional[NED]]      # aligned with command list (None if no position)
     waypoints_lla: List[Optional[LLA]]      # aligned with command list (None if no position)
     speed_m_s: List[Optional[SPD]]          # aligned with command list (None if unused)
     land: bool = True
 
 
+def _append_home_approach_and_land(
+    commands: List[int],
+    waypoints_ned: List[Optional[NED]],
+    waypoints_lla: List[Optional[LLA]],
+    speeds: List[Optional[SPD]],
+    home_position: LLA,
+    landing_alt_m: float,
+) -> None:
+    if float(landing_alt_m) < 0.0:
+        raise ValueError(f"landing_alt_m must be non-negative, got {landing_alt_m}")
+
+    approach_ned: NED = (0.0, 0.0, -float(landing_alt_m))
+    approach_lla: LLA = (float(home_position[0]), float(home_position[1]), float(landing_alt_m))
+
+    commands.extend([MAV_CMD_NAV_WAYPOINT, MAV_CMD_NAV_LAND])
+    waypoints_ned.extend([approach_ned, None])
+    waypoints_lla.extend([approach_lla, None])
+    speeds.extend([None, None])
+
+
 # ----------------------------------------------------------------------
-# Pattern 1: 3-Point Turn Observation
+# Pattern: Planar N-Point Waypoint Set
 # ----------------------------------------------------------------------
-def make_turn_3pts(
-    home_position: List[LLA],
-    settle_m: float,
-    leg1_m: float,
-    leg2_m: float,
-    turn_deg: float,
+def make_planar_n_pts(
+    home_position: LLA,
+    n: int,
+    edge_m: Tuple[float, ...],
+    vertex_deg: Tuple[float, ...],
+    speed_m_s: Tuple[float, ...],
     alt_m: float,
-    speed_m_s: float,
-    land: bool = True, 
-) -> MissionSpec:
-    """
-    3-point turn with configurable turn angle.
-
-    Convention:
-      - NED frame: +N forward, +E right, +D down
-      - Heading angle psi is measured clockwise from North toward East (deg).
-
-    Geometry:
-        P1 = (settle_m, 0, -alt): velocity/control settle pre-roll (leg1_m) segment
-            Why different from TO position? - from TO position to first waypoint, we cannot control flight speed.
-        P2 = P1 + leg_m * [cos(0), sin(0)] = (settle_m + leg_m, 0, -alt) (north leg)
-        P3 = P2 + leg2_m * [cos(turn), sin(turn)] (turned leg)
-
-    Mission layout:
-      TAKEOFF
-      WP P1 (settle) : speed uncontrolled
-      DO_CHANGE_SPEED(speed_m_s) : applies for subsequent legs
-      WP P2
-      WP P3
-      RTL or LAND
-    """
-
-    if not home_position:
-        raise ValueError("home_position must be non-empty")
-    
-    d = -float(alt_m)
-    settle = float(settle_m)
-    l1 = float(leg1_m)
-    l2 = float(leg2_m)
-
-    dN1 = l1 * np.cos(0)
-    dE1 = l1 * np.sin(0)
-    psi = np.radians(float(turn_deg))
-    dN2 = l2 * np.cos(psi)
-    dE2 = l2 * np.sin(psi)
-
-    P1: NED = (settle, 0.0, d)
-    P2: NED = (P1[0] + dN1, P1[1] + dE1, d)
-    P3: NED = (P2[0] + dN2, P2[1] + dE2, d)
-
-    home = home_position
-
-    # ------------------------------------------------------------------
-    # Build aligned mission-item lists (same length)
-    # ------------------------------------------------------------------
-    commands: List[int] = [
-        MAV_CMD_NAV_TAKEOFF,      # idx 0
-        # MAV_CMD_NAV_WAYPOINT,     # idx 1: P1
-        MAV_CMD_DO_CHANGE_SPEED,  # idx 2
-        MAV_CMD_NAV_WAYPOINT,     # idx 3: P2
-        MAV_CMD_NAV_WAYPOINT,     # idx 4: P3
-    ]
-    if land:
-        commands.append(MAV_CMD_NAV_LAND)  # idx 5
-
-    waypoints_ned: List[Optional[NED]] = [
-        None,   # TAKEOFF (we keep it None to avoid forcing fake points)
-        # P1,     # WP
-        None,   # DO_CHANGE_SPEED
-        P2,     # WP
-        P3,     # WP
-    ]
-    if land:
-        waypoints_ned.append(None)  # LAND: you may choose to land at home or last wp; keep None here
-
-    waypoints_lla: List[Optional[LLA]] = [
-        None,
-        # ned_to_lla(P1, home),
-        None,
-        ned_to_lla(P2, home),
-        ned_to_lla(P3, home),
-    ]
-    if land:
-        waypoints_lla.append(None)
-
-    speeds: List[Optional[float]] = [
-        None,        # TAKEOFF
-        # None,        # WP P1
-        speed_m_s,   # DO_CHANGE_SPEED
-        None,        # WP P2
-        None,        # WP P3
-    ]
-    if land:
-        speeds.append(None)
-
-    # sanity check: all aligned
-    assert len(commands) == len(waypoints_ned) == len(waypoints_lla) == len(speeds)
-
-    return MissionSpec(
-        name=f"turn3_settle_{int(round(turn_deg))}deg",
-        home_position=home_position,
-        command=commands,
-        takeoff_alt_m=alt_m,
-        waypoints_ned=waypoints_ned,
-        waypoints_lla=waypoints_lla,
-        speed_m_s=speeds,
-        land=land,
-    )
-
-# ----------------------------------------------------------------------
-# Pattern 2: 4-Point Square
-# ----------------------------------------------------------------------
-def make_quad_4pts(
-    home_position: List[LLA],
-    side1_m: float,
-    side2_m: float,
-    angle_deg: float,
-    alt_m: float,
-    speed_m_s: float,
-    settle_m: float = 10.0,
+    landing_alt_m: float = DEFAULT_LANDING_ALT_M,
     land: bool = True,
 ) -> MissionSpec:
     """
-    4-point quadrilateral mission.
-
-    This generalizes:
-      - square      : side1_m == side2_m, angle_deg = 90
-      - rectangle   : side1_m != side2_m, angle_deg = 90
-      - parallelogram / skewed box : angle_deg != 90
+    Build a planar waypoint set from edge lengths and absolute headings.
 
     Convention:
       - NED frame: +N forward, +E right, +D down
-      - angle_deg is measured clockwise from the first leg direction
-        toward East.
-
-    Geometry:
-        P0 = (settle_m, 0, -alt)
-        P1 = P0 + side1 along North
-        P2 = P1 + side2 at angle_deg
-        P3 = P0 + side2 at angle_deg
+      - vertex_deg values are headings measured clockwise from North to East.
+      - n includes the takeoff/home point, so n-1 edge definitions produce
+        n-1 waypoint endpoints.
 
     Mission layout:
       TAKEOFF
-      WP P0
-      DO_CHANGE_SPEED
+      DO_CHANGE_SPEED(speed_0)
       WP P1
-      WP P2
-      WP P3
-      WP P0
+      ...
+      DO_CHANGE_SPEED(speed_n-2)
+      WP P(n-1)
+      WP home approach at landing_alt_m
       LAND
     """
 
     if not home_position:
         raise ValueError("home_position must be non-empty")
 
+    n = int(n)
+    if n < 2:
+        raise ValueError("n must be at least 2")
+
+    expected = n - 1
+    if len(edge_m) != expected:
+        raise ValueError(f"edge_m must contain n-1 values ({expected}), got {len(edge_m)}")
+    if len(vertex_deg) != expected:
+        raise ValueError(f"vertex_deg must contain n-1 values ({expected}), got {len(vertex_deg)}")
+    if len(speed_m_s) != expected:
+        raise ValueError(f"speed_m_s must contain n-1 values ({expected}), got {len(speed_m_s)}")
+
+    for angle in vertex_deg:
+        if not 0.0 <= float(angle) <= 360.0:
+            raise ValueError(f"vertex_deg values must be in [0, 360], got {angle}")
+
     d = -float(alt_m)
-    settle = float(settle_m)
-    s1 = float(side1_m)
-    s2 = float(side2_m)
+    cur_n = 0.0
+    cur_e = 0.0
+    planar_points: List[NED] = []
 
-    theta = np.radians(float(angle_deg))
+    for length, heading_deg in zip(edge_m, vertex_deg):
+        theta = np.radians(float(heading_deg))
+        cur_n += float(length) * np.cos(theta)
+        cur_e += float(length) * np.sin(theta)
+        planar_points.append((float(cur_n), float(cur_e), d))
 
-    # First edge direction: North
-    v1_n = s1
-    v1_e = 0.0
+    commands: List[int] = [MAV_CMD_NAV_TAKEOFF]
+    waypoints_ned: List[Optional[NED]] = [None]
+    waypoints_lla: List[Optional[LLA]] = [None]
+    speeds: List[Optional[SPD]] = [None]
 
-    # Second edge direction: angle from North toward East
-    v2_n = s2 * np.cos(theta)
-    v2_e = s2 * np.sin(theta)
+    for point, speed in zip(planar_points, speed_m_s):
+        commands.extend([MAV_CMD_DO_CHANGE_SPEED, MAV_CMD_NAV_WAYPOINT])
+        waypoints_ned.extend([None, point])
+        waypoints_lla.extend([None, ned_to_lla(point, home_position)])
+        speeds.extend([float(speed), None])
 
-    P0: NED = (settle, 0.0, d)
-    P1: NED = (P0[0] + v1_n, P0[1] + v1_e, d)
-    P2: NED = (P1[0] + v2_n, P1[1] + v2_e, d)
-    P3: NED = (P0[0] + v2_n, P0[1] + v2_e, d)
-
-    commands: List[int] = [
-        MAV_CMD_NAV_TAKEOFF,      # idx 0
-        MAV_CMD_NAV_WAYPOINT,     # idx 1: P0 settle point
-        MAV_CMD_DO_CHANGE_SPEED,  # idx 2
-        MAV_CMD_NAV_WAYPOINT,     # idx 3: P1
-        MAV_CMD_NAV_WAYPOINT,     # idx 4: P2
-        MAV_CMD_NAV_WAYPOINT,     # idx 5: P3
-        MAV_CMD_NAV_WAYPOINT,     # idx 6: back to P0
-    ]
     if land:
-        commands.append(MAV_CMD_NAV_LAND)
-
-    waypoints_ned: List[Optional[NED]] = [
-        None,
-        P0,
-        None,
-        P1,
-        P2,
-        P3,
-        P0,
-    ]
-    if land:
-        waypoints_ned.append(None)
-
-    waypoints_lla: List[Optional[LLA]] = [
-        None,
-        ned_to_lla(P0, home_position),
-        None,
-        ned_to_lla(P1, home_position),
-        ned_to_lla(P2, home_position),
-        ned_to_lla(P3, home_position),
-        ned_to_lla(P0, home_position),
-    ]
-    if land:
-        waypoints_lla.append(None)
-
-    speeds: List[Optional[float]] = [
-        None,
-        None,
-        float(speed_m_s),
-        None,
-        None,
-        None,
-        None,
-    ]
-    if land:
-        speeds.append(None)
+        _append_home_approach_and_land(
+            commands,
+            waypoints_ned,
+            waypoints_lla,
+            speeds,
+            home_position,
+            landing_alt_m,
+        )
 
     assert len(commands) == len(waypoints_ned) == len(waypoints_lla) == len(speeds)
 
-    if abs(side1_m - side2_m) < 1e-6 and abs(angle_deg - 90.0) < 1e-6:
-        name = "square4"
-    elif abs(angle_deg - 90.0) < 1e-6:
-        name = "rectangle4"
-    else:
-        name = f"quad4_{int(round(angle_deg))}deg"
-
     return MissionSpec(
-        name=name,
+        name=f"planar{n}pts",
         home_position=home_position,
         command=commands,
         takeoff_alt_m=alt_m,
+        landing_alt_m=float(landing_alt_m),
+        waypoints_ned=waypoints_ned,
+        waypoints_lla=waypoints_lla,
+        speed_m_s=speeds,
+        land=land,
+    )
+
+
+# ----------------------------------------------------------------------
+# Pattern: 3D N-Point Waypoint Set
+# ----------------------------------------------------------------------
+def make_three_d_n_pts(
+    home_position: LLA,
+    n: int,
+    edge_m: Tuple[float, ...],
+    vertex_deg: Tuple[float, ...],
+    alt_m: Tuple[float, ...],
+    speed_m_s: Tuple[float, ...],
+    takeoff_alt_m: float,
+    landing_alt_m: float = DEFAULT_LANDING_ALT_M,
+    land: bool = True,
+) -> MissionSpec:
+    """
+    Build a 3D waypoint set from planar edges and per-waypoint altitude.
+
+    edge_m and vertex_deg define the horizontal path. alt_m contains positive
+    altitude above home for each waypoint and is converted internally to NED
+    down by negating it.
+    """
+
+    if not home_position:
+        raise ValueError("home_position must be non-empty")
+
+    n = int(n)
+    if n < 2:
+        raise ValueError("n must be at least 2")
+
+    expected = n - 1
+    if len(edge_m) != expected:
+        raise ValueError(f"edge_m must contain n-1 values ({expected}), got {len(edge_m)}")
+    if len(vertex_deg) != expected:
+        raise ValueError(f"vertex_deg must contain n-1 values ({expected}), got {len(vertex_deg)}")
+    if len(alt_m) != expected:
+        raise ValueError(f"alt_m must contain n-1 values ({expected}), got {len(alt_m)}")
+    if len(speed_m_s) != expected:
+        raise ValueError(f"speed_m_s must contain n-1 values ({expected}), got {len(speed_m_s)}")
+
+    for angle in vertex_deg:
+        if not 0.0 <= float(angle) <= 360.0:
+            raise ValueError(f"vertex_deg values must be in [0, 360], got {angle}")
+    for altitude in alt_m:
+        if float(altitude) < 0.0:
+            raise ValueError(f"alt_m values must be non-negative, got {altitude}")
+    if float(takeoff_alt_m) < 0.0:
+        raise ValueError(f"takeoff_alt_m must be non-negative, got {takeoff_alt_m}")
+    if float(landing_alt_m) < 0.0:
+        raise ValueError(f"landing_alt_m must be non-negative, got {landing_alt_m}")
+
+    cur_n = 0.0
+    cur_e = 0.0
+    points: List[NED] = []
+
+    for length, heading_deg, altitude in zip(edge_m, vertex_deg, alt_m):
+        theta = np.radians(float(heading_deg))
+        cur_n += float(length) * np.cos(theta)
+        cur_e += float(length) * np.sin(theta)
+        points.append((float(cur_n), float(cur_e), -float(altitude)))
+
+    commands: List[int] = [MAV_CMD_NAV_TAKEOFF]
+    waypoints_ned: List[Optional[NED]] = [None]
+    waypoints_lla: List[Optional[LLA]] = [None]
+    speeds: List[Optional[SPD]] = [None]
+
+    for point, speed in zip(points, speed_m_s):
+        commands.extend([MAV_CMD_DO_CHANGE_SPEED, MAV_CMD_NAV_WAYPOINT])
+        waypoints_ned.extend([None, point])
+        waypoints_lla.extend([None, ned_to_lla(point, home_position)])
+        speeds.extend([float(speed), None])
+
+    if land:
+        _append_home_approach_and_land(
+            commands,
+            waypoints_ned,
+            waypoints_lla,
+            speeds,
+            home_position,
+            landing_alt_m,
+        )
+
+    assert len(commands) == len(waypoints_ned) == len(waypoints_lla) == len(speeds)
+
+    return MissionSpec(
+        name=f"three_d{n}pts",
+        home_position=home_position,
+        command=commands,
+        takeoff_alt_m=float(takeoff_alt_m),
+        landing_alt_m=float(landing_alt_m),
         waypoints_ned=waypoints_ned,
         waypoints_lla=waypoints_lla,
         speed_m_s=speeds,
@@ -418,11 +423,10 @@ def write_scenario_yaml(
 
     run_id = int(run_dir.name.split("_")[-1])
 
-    # Pick home position for this run (if multiple homes are provided)
+    # Pick home position for this run
     if not mission.home_position:
-        raise ValueError("MissionSpec.home_position must be a non-empty list")
+        raise ValueError("MissionSpec.home_position must be non-empty")
 
-    home_idx = min(run_id, len(mission.home_position) - 1)
     home = mission.home_position  # [lat, lon, alt]
 
     def ned_to_yaml(wp: Optional[tuple[float, float, float]]):
@@ -463,6 +467,7 @@ def write_scenario_yaml(
                 "name": mission.name,
                 "home_lla": [float(home[0]), float(home[1]), float(home[2])],
                 "takeoff_alt_m": float(mission.takeoff_alt_m),
+                "landing_alt_m": float(mission.landing_alt_m),
                 "altitude_mode": 1,
                 "land": bool(mission.land),
                 "command": [int(c) for c in mission.command],
@@ -519,79 +524,95 @@ def write_metadata_yaml(outdir: Path, args: argparse.Namespace) -> None:
     """
 
     pattern_ranges = {
-        "turn3pts": {
-            "settle_m": {"default": 10.0},
-            "leg1_m": {"default": 50.0},
-            "leg2_m": {"default": 50.0},
-            "turn_deg": {
-                "default": 90.0,
-                "random_range": [0.0, 360.0],
+        "planar_n_pts": {
+            "n": {"default": 3, "unit": "count"},
+            "edge_m": {
+                "default": [50.0, 50.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_EDGE_RANGE_M),
+                "unit": "m",
+            },
+            "vertex_deg": {
+                "default": [0.0, 90.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_VERTEX_RANGE_DEG),
                 "unit": "deg",
+            },
+            "speed_m_s": {
+                "default": [6.0, 6.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_SPEED_RANGE_M_S),
+                "unit": "m/s",
             },
             "alt_m": {
                 "default": 10.0,
-                "random_range": [5.0, 50.0],
+                "random_range": _range_to_list(DEFAULT_ALT_RANGE_M),
                 "unit": "m",
             },
-            "speed_m_s": {"default": 6.0, "unit": "m/s"},
+            "landing_alt_m": {
+                "default": DEFAULT_LANDING_ALT_M,
+                "unit": "m",
+            },
         },
-        "quad4pts": {
-            "settle_m": {
-                "default": 10.0,
-                "random_range": [5.0, 20.0],
+        "three_d_n_pts": {
+            "n": {"default": 3, "unit": "count"},
+            "edge_m": {
+                "default": [50.0, 50.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_EDGE_RANGE_M),
                 "unit": "m",
             },
-            "side1_m": {
-                "default": 50.0,
-                "random_range": [30.0, 120.0],
-                "unit": "m",
-            },
-            "side2_m": {
-                "default": 50.0,
-                "random_range": [30.0, 120.0],
-                "unit": "m",
-            },
-            "angle_deg": {
-                "default": 90.0,
-                "random_range": [45.0, 135.0],
+            "vertex_deg": {
+                "default": [0.0, 90.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_VERTEX_RANGE_DEG),
                 "unit": "deg",
             },
             "alt_m": {
+                "default": [10.0, 10.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_ALT_RANGE_M),
+                "unit": "m",
+            },
+            "takeoff_alt_m": {
                 "default": 10.0,
-                "random_range": [5.0, 50.0],
+                "random_range": _range_to_list(DEFAULT_ALT_RANGE_M),
+                "unit": "m",
+            },
+            "landing_alt_m": {
+                "default": DEFAULT_LANDING_ALT_M,
                 "unit": "m",
             },
             "speed_m_s": {
-                "default": 6.0,
-                "random_range": [3.0, 12.0],
+                "default": [6.0, 6.0],
+                "length": "n-1",
+                "random_range": _range_to_list(DEFAULT_SPEED_RANGE_M_S),
                 "unit": "m/s",
             },
         },
     }
 
-    current_pattern_parameters = {}
-
-    if args.pattern == "turn3pts":
-        current_pattern_parameters = {
-            "settle_m": args.settle_m,
-            "leg1_m": args.leg1_m,
-            "leg2_m": args.leg2_m,
-            "turn_deg": args.turn_deg,
-            "alt_m": args.alt_m,
-            "speed_m_s": args.speed_m_s,
-            "land": args.land,
-        }
-
-    elif args.pattern == "quad4pts":
-        current_pattern_parameters = {
-            "settle_m": args.settle_m,
-            "side1_m": args.side1_m,
-            "side2_m": args.side2_m,
-            "angle_deg": args.angle_deg,
-            "alt_m": args.alt_m,
-            "speed_m_s": args.speed_m_s,
-            "land": args.land,
-        }
+    current_pattern_parameters = {
+        "n": args.n,
+        "edge_m": _metadata_value(args.edge_m, args.edge_m_range),
+        "edge_m_range": _range_to_list(args.edge_m_range),
+        "vertex_deg": _metadata_value(args.vertex_deg, args.vertex_deg_range),
+        "vertex_deg_range": _range_to_list(args.vertex_deg_range),
+        "alt_m": _metadata_value(args.alt_m, args.alt_m_range),
+        "alt_m_range": _range_to_list(args.alt_m_range),
+        "speed_m_s": _metadata_value(args.speed_m_s, args.speed_m_s_range),
+        "speed_m_s_range": _range_to_list(args.speed_m_s_range),
+        "landing_alt_m": float(args.landing_alt_m),
+        "land": args.land,
+    }
+    if args.pattern == "three_d_n_pts":
+        current_pattern_parameters["takeoff_alt_m"] = _metadata_value(
+            args.takeoff_alt_m,
+            args.takeoff_alt_m_range,
+        )
+        current_pattern_parameters["takeoff_alt_m_range"] = _range_to_list(
+            args.takeoff_alt_m_range
+        )
 
     metadata = {
         "dataset": {
@@ -601,6 +622,8 @@ def write_metadata_yaml(outdir: Path, args: argparse.Namespace) -> None:
                 "under the same mission/trajectory setting."
             ),
             "num_runs": int(args.runs),
+            "start_run_id": int(args.start_run_id),
+            "end_run_id": int(args.start_run_id + args.runs - 1),
             "selected_pattern": args.pattern,
         },
         "patterns": {
@@ -640,7 +663,7 @@ def write_metadata_yaml(outdir: Path, args: argparse.Namespace) -> None:
             "metadata.yaml stores dataset-level information shared across all runs.",
             "Each run directory contains a scenario.yaml file.",
             "scenario.yaml stores run-specific mission geometry and autopilot launch settings.",
-            "If a parameter value is 'random', the actual sampled value is stored in each run_XXX/scenario.yaml.",
+            "When a parameter uses random_uniform, sampled values are stored in each run_XXX/scenario.yaml.",
         ],
     }
 
@@ -671,6 +694,12 @@ def main() -> int:
     # Output settings
     common_parser.add_argument("--outdir", type=Path, default=Path("./data/sitl_logs"))
     common_parser.add_argument("--runs", type=int, default=1)
+    common_parser.add_argument(
+        "--start-run-id",
+        type=int,
+        default=0,
+        help="first run directory id, e.g. 10 creates run_010",
+    )
     common_parser.add_argument(
         "--home-lla",
         type=float,
@@ -712,73 +741,276 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Scenario generator (pattern-specific)")
     subparsers = ap.add_subparsers(dest="pattern", required=True)
 
+    def parse_bool(v: str) -> bool:
+        lowered = v.lower()
+        if lowered in ("1", "true", "yes", "y", "on"):
+            return True
+        if lowered in ("0", "false", "no", "n", "off"):
+            return False
+        raise argparse.ArgumentTypeError("expected a boolean value")
+
+    def parse_float_list(values: List[str]) -> Tuple[float, ...]:
+        if len(values) == 1 and values[0].lower() == RANDOM_SPEC:
+            return RANDOM_SPEC
+
+        parsed: List[float] = []
+        for value in values:
+            for item in value.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                try:
+                    parsed.append(float(item))
+                except ValueError as e:
+                    raise argparse.ArgumentTypeError(
+                        f'expected float values or "random", got {item!r}'
+                    ) from e
+        return tuple(parsed)
+
+    def parse_float_or_random(value: str):
+        if value.lower() == RANDOM_SPEC:
+            return RANDOM_SPEC
+        try:
+            return float(value)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(
+                f'expected a float or "random", got {value!r}'
+            ) from e
+
+    def parse_float_range(values: List[float]) -> Tuple[float, float]:
+        low, high = float(values[0]), float(values[1])
+        if low > high:
+            raise argparse.ArgumentTypeError("range min must be <= max")
+        return (low, high)
+
     # -------------------------
-    # turn3pts
+    # planar_n_pts
     # -------------------------
-    turn3 = subparsers.add_parser(
-        "turn3pts",
+    planar = subparsers.add_parser(
+        "planar_n_pts",
         parents=[common_parser],
     )
 
-    def parse_turn_deg(v: str):
-        if v.lower() == "random":
-            return "random"
-        try:
-            return float(v)
-        except ValueError as e:
-            raise argparse.ArgumentTypeError(
-                'turn-deg must be a float or "random"'
-            ) from e
-        
-    def parse_alt_m(v: str):
-        if v.lower() == "random":
-            return "random"
-        try:
-            return float(v)
-        except ValueError as e:
-            raise argparse.ArgumentTypeError(
-                'alt-m must be a float or "random"'
-            ) from e
-    
-    turn3.add_argument("--settle-m", type=float, default=10.0)
-    turn3.add_argument("--leg1-m", type=float, default=50.0)
-    turn3.add_argument("--leg2-m", type=float, default=50.0)
-    turn3.add_argument("--turn-deg", type=parse_turn_deg, default=90, help='Turn angle (deg) or "random"')
-    turn3.add_argument('--alt-m', type=parse_alt_m, default=10, help='Altitude (m) or "random"')
-    turn3.add_argument('--speed-m-s', type=float, default=6.0)
-    turn3.add_argument('--land', type=bool, default=True, help="Whether to land at the end of the mission")
+    planar.add_argument("--n", type=int, default=3)
+    planar.add_argument(
+        "--edge-m",
+        type=str,
+        nargs="+",
+        default=("50.0", "50.0"),
+        help='n-1 edge lengths in meters, or "random"',
+    )
+    planar.add_argument(
+        "--edge-m-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_EDGE_RANGE_M,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --edge-m random",
+    )
+    planar.add_argument(
+        "--vertex-deg",
+        type=str,
+        nargs="+",
+        default=("0.0", "90.0"),
+        help='n-1 absolute headings in degrees [0, 360], clockwise from North, or "random"',
+    )
+    planar.add_argument(
+        "--vertex-deg-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_VERTEX_RANGE_DEG,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --vertex-deg random",
+    )
+    planar.add_argument("--alt-m", type=parse_float_or_random, default=10.0)
+    planar.add_argument(
+        "--alt-m-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_ALT_RANGE_M,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --alt-m random",
+    )
+    planar.add_argument(
+        "--speed-m-s",
+        type=str,
+        nargs="+",
+        default=("6.0", "6.0"),
+        help='n-1 speeds in m/s, one DO_CHANGE_SPEED before each waypoint, or "random"',
+    )
+    planar.add_argument(
+        "--speed-m-s-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_SPEED_RANGE_M_S,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --speed-m-s random",
+    )
+    planar.add_argument("--land", type=parse_bool, default=True)
+    planar.add_argument(
+        "--landing-alt-m",
+        type=float,
+        default=DEFAULT_LANDING_ALT_M,
+        help="home approach waypoint altitude above home before LAND",
+    )
 
     # -------------------------
-    # quad4: square / rectangle / skewed parallelogram
+    # three_d_n_pts
     # -------------------------
-    quad4 = subparsers.add_parser(
-        "quad4pts",
+    three_d = subparsers.add_parser(
+        "three_d_n_pts",
         parents=[common_parser],
     )
 
-    def parse_random_float(v: str):
-        if v.lower() == "random":
-            return "random"
-        try:
-            return float(v)
-        except ValueError as e:
-            raise argparse.ArgumentTypeError(
-                'value must be a float or "random"'
-            ) from e
-
-    quad4.add_argument("--settle-m", type=parse_random_float, default=10.0)
-    quad4.add_argument("--side1-m", type=parse_random_float, default=50.0)
-    quad4.add_argument("--side2-m", type=parse_random_float, default=50.0)
-    quad4.add_argument("--angle-deg", type=parse_random_float, default=90.0)
-    quad4.add_argument("--alt-m", type=parse_random_float, default=10.0)
-    quad4.add_argument("--speed-m-s", type=parse_random_float, default=6.0)
-    quad4.add_argument("--land", type=bool, default=True)
+    three_d.add_argument("--n", type=int, default=3)
+    three_d.add_argument(
+        "--edge-m",
+        type=str,
+        nargs="+",
+        default=("50.0", "50.0"),
+        help='n-1 edge lengths in meters, or "random"',
+    )
+    three_d.add_argument(
+        "--edge-m-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_EDGE_RANGE_M,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --edge-m random",
+    )
+    three_d.add_argument(
+        "--vertex-deg",
+        type=str,
+        nargs="+",
+        default=("0.0", "90.0"),
+        help='n-1 absolute headings in degrees [0, 360], clockwise from North, or "random"',
+    )
+    three_d.add_argument(
+        "--vertex-deg-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_VERTEX_RANGE_DEG,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --vertex-deg random",
+    )
+    three_d.add_argument(
+        "--alt-m",
+        type=str,
+        nargs="+",
+        default=("10.0", "10.0"),
+        help='n-1 waypoint altitudes above home in meters, or "random"',
+    )
+    three_d.add_argument(
+        "--alt-m-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_ALT_RANGE_M,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --alt-m random",
+    )
+    three_d.add_argument(
+        "--takeoff-alt-m",
+        type=parse_float_or_random,
+        default=10.0,
+        help='takeoff altitude above home in meters, or "random"',
+    )
+    three_d.add_argument(
+        "--takeoff-alt-m-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_ALT_RANGE_M,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --takeoff-alt-m random",
+    )
+    three_d.add_argument(
+        "--speed-m-s",
+        type=str,
+        nargs="+",
+        default=("6.0", "6.0"),
+        help='n-1 speeds in m/s, one DO_CHANGE_SPEED before each waypoint, or "random"',
+    )
+    three_d.add_argument(
+        "--speed-m-s-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_SPEED_RANGE_M_S,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when --speed-m-s random",
+    )
+    three_d.add_argument("--land", type=parse_bool, default=True)
+    three_d.add_argument(
+        "--landing-alt-m",
+        type=float,
+        default=DEFAULT_LANDING_ALT_M,
+        help="home approach waypoint altitude above home before LAND",
+    )
 
 
     # --------------------------------------------------------------
     # Parse CLI arguments
     # --------------------------------------------------------------
     args = ap.parse_args()
+
+    if args.pattern in ("planar_n_pts", "three_d_n_pts"):
+        try:
+            args.edge_m_range = parse_float_range(list(args.edge_m_range))
+            args.vertex_deg_range = parse_float_range(list(args.vertex_deg_range))
+            args.alt_m_range = parse_float_range(list(args.alt_m_range))
+            args.speed_m_s_range = parse_float_range(list(args.speed_m_s_range))
+            args.edge_m = parse_float_list(list(args.edge_m))
+            args.vertex_deg = parse_float_list(list(args.vertex_deg))
+            args.speed_m_s = parse_float_list(list(args.speed_m_s))
+            if args.pattern == "three_d_n_pts":
+                args.alt_m = parse_float_list(list(args.alt_m))
+                args.takeoff_alt_m_range = parse_float_range(list(args.takeoff_alt_m_range))
+        except argparse.ArgumentTypeError as e:
+            ap.error(str(e))
+
+        expected = args.n - 1
+        if args.n < 2:
+            ap.error(f"{args.pattern} requires --n >= 2")
+        if args.runs < 1:
+            ap.error("--runs must be at least 1")
+        if args.start_run_id < 0:
+            ap.error("--start-run-id must be non-negative")
+        if args.edge_m != RANDOM_SPEC and len(args.edge_m) != expected:
+            ap.error(f"{args.pattern} requires {expected} --edge-m values")
+        if args.vertex_deg != RANDOM_SPEC and len(args.vertex_deg) != expected:
+            ap.error(f"{args.pattern} requires {expected} --vertex-deg values")
+        if args.speed_m_s != RANDOM_SPEC and len(args.speed_m_s) != expected:
+            ap.error(f"{args.pattern} requires {expected} --speed-m-s values")
+        if args.pattern == "three_d_n_pts" and args.alt_m != RANDOM_SPEC and len(args.alt_m) != expected:
+            ap.error(f"{args.pattern} requires {expected} --alt-m values")
+        if args.edge_m != RANDOM_SPEC and any(v < 0.0 for v in args.edge_m):
+            ap.error("--edge-m values must be non-negative")
+        if args.edge_m_range[0] < 0.0:
+            ap.error("--edge-m-range values must be non-negative")
+        if args.vertex_deg != RANDOM_SPEC and any(v < 0.0 or v > 360.0 for v in args.vertex_deg):
+            ap.error("--vertex-deg values must be in [0, 360]")
+        if args.vertex_deg == RANDOM_SPEC and (
+            args.vertex_deg_range[0] < 0.0 or args.vertex_deg_range[1] > 360.0
+        ):
+            ap.error("--vertex-deg-range must be within [0, 360]")
+        if args.speed_m_s != RANDOM_SPEC and any(v < 0.0 for v in args.speed_m_s):
+            ap.error("--speed-m-s values must be non-negative")
+        if args.speed_m_s_range[0] < 0.0:
+            ap.error("--speed-m-s-range values must be non-negative")
+        if args.pattern == "planar_n_pts" and args.alt_m != RANDOM_SPEC and args.alt_m < 0.0:
+            ap.error("--alt-m must be non-negative")
+        if args.pattern == "three_d_n_pts" and args.alt_m != RANDOM_SPEC and any(v < 0.0 for v in args.alt_m):
+            ap.error("--alt-m values must be non-negative")
+        if args.alt_m_range[0] < 0.0:
+            ap.error("--alt-m-range values must be non-negative")
+        if args.landing_alt_m < 0.0:
+            ap.error("--landing-alt-m must be non-negative")
+        if (
+            args.pattern == "three_d_n_pts"
+            and args.takeoff_alt_m != RANDOM_SPEC
+            and args.takeoff_alt_m < 0.0
+        ):
+            ap.error("--takeoff-alt-m must be non-negative")
+        if args.pattern == "three_d_n_pts" and args.takeoff_alt_m_range[0] < 0.0:
+            ap.error("--takeoff-alt-m-range values must be non-negative")
 
     # Creating output directory (if not exists)
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -791,80 +1023,45 @@ def main() -> int:
     # --------------------------------------------------------------
     # Generate runs
     # --------------------------------------------------------------
-    for i in range(args.runs):
-        run_dir = args.outdir / f"run_{i:03d}"
+    for offset in range(args.runs):
+        run_id = args.start_run_id + offset
+        run_dir = args.outdir / f"run_{run_id:03d}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        if args.pattern == "turn3pts":
-            if args.turn_deg == "random":
-                turn_deg = float(np.random.uniform(0.0, 360.0))
-            else:
-                turn_deg = float(args.turn_deg)
+        if args.pattern == "planar_n_pts":
+            edge_m = _sample_tuple_spec(args.edge_m, args.n - 1, args.edge_m_range)
+            vertex_deg = _sample_tuple_spec(args.vertex_deg, args.n - 1, args.vertex_deg_range)
+            alt_m = _sample_float_spec(args.alt_m, args.alt_m_range)
+            speed_m_s = _sample_tuple_spec(args.speed_m_s, args.n - 1, args.speed_m_s_range)
 
-            if args.alt_m == "random":
-                alt_m = float(np.random.uniform(5.0, 50.0))
-            else:                
-                alt_m = float(args.alt_m)  
-
-            mission = make_turn_3pts(
+            mission = make_planar_n_pts(
                 home_position=args.home_lla,
-                settle_m=args.settle_m,
-                leg1_m=args.leg1_m,
-                leg2_m=args.leg2_m,
-                turn_deg=turn_deg,
+                n=args.n,
+                edge_m=edge_m,
+                vertex_deg=vertex_deg,
                 alt_m=alt_m,
-                speed_m_s=args.speed_m_s,
-                land=args.land,
-            )
-
-        elif args.pattern == "quad4pts":
-            settle_m = (
-                float(np.random.uniform(5.0, 20.0))
-                if args.settle_m == "random"
-                else float(args.settle_m)
-            )
-
-            side1_m = (
-                float(np.random.uniform(30.0, 120.0))
-                if args.side1_m == "random"
-                else float(args.side1_m)
-            )
-
-            side2_m = (
-                float(np.random.uniform(30.0, 120.0))
-                if args.side2_m == "random"
-                else float(args.side2_m)
-            )
-
-            angle_deg = (
-                float(np.random.uniform(45.0, 135.0))
-                if args.angle_deg == "random"
-                else float(args.angle_deg)
-            )
-
-            alt_m = (
-                float(np.random.uniform(5.0, 50.0))
-                if args.alt_m == "random"
-                else float(args.alt_m)
-            )
-
-            speed_m_s = (
-                float(np.random.uniform(3.0, 12.0))
-                if args.speed_m_s == "random"
-                else float(args.speed_m_s)
-            )
-
-            mission = make_quad_4pts(
-                home_position=args.home_lla,
-                settle_m=settle_m,
-                side1_m=side1_m,
-                side2_m=side2_m,
-                angle_deg=angle_deg,
-                alt_m=alt_m,
+                landing_alt_m=args.landing_alt_m,
                 speed_m_s=speed_m_s,
                 land=args.land,
             )
+        elif args.pattern == "three_d_n_pts":
+            edge_m = _sample_tuple_spec(args.edge_m, args.n - 1, args.edge_m_range)
+            vertex_deg = _sample_tuple_spec(args.vertex_deg, args.n - 1, args.vertex_deg_range)
+            alt_m = _sample_tuple_spec(args.alt_m, args.n - 1, args.alt_m_range)
+            takeoff_alt_m = _sample_float_spec(args.takeoff_alt_m, args.takeoff_alt_m_range)
+            speed_m_s = _sample_tuple_spec(args.speed_m_s, args.n - 1, args.speed_m_s_range)
 
+            mission = make_three_d_n_pts(
+                home_position=args.home_lla,
+                n=args.n,
+                edge_m=edge_m,
+                vertex_deg=vertex_deg,
+                alt_m=alt_m,
+                takeoff_alt_m=takeoff_alt_m,
+                landing_alt_m=args.landing_alt_m,
+                speed_m_s=speed_m_s,
+                land=args.land,
+            )
         else:
             raise ValueError(f"Unsupported pattern: {args.pattern}")
 
@@ -891,6 +1088,8 @@ def main() -> int:
     print(
         f"Generated {args.runs} runs "
         f"with pattern='{args.pattern}' "
+        f"from run_{args.start_run_id:03d} "
+        f"to run_{args.start_run_id + args.runs - 1:03d} "
         f"under {args.outdir}"
     )
         

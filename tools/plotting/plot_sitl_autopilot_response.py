@@ -139,6 +139,7 @@ def plot_all(
     output_dir.mkdir(parents=True, exist_ok=True)
     saved = [
         output_dir / f"{prefix}_trajectory_3d.png",
+        output_dir / f"{prefix}_position_history.png",
         output_dir / f"{prefix}_velocity_history.png",
         output_dir / f"{prefix}_attitude_history.png",
         output_dir / f"{prefix}_rate_history.png",
@@ -147,10 +148,17 @@ def plot_all(
     plot_3d_trajectory(responses, saved[0])
     plot_vector_history(
         responses,
+        "position",
+        "Position Time History",
+        "[m]",
+        saved[1],
+    )
+    plot_vector_history(
+        responses,
         "velocity",
         "Velocity Time History",
         "[m/s]",
-        saved[1],
+        saved[2],
         include_norm=True,
     )
     plot_vector_history(
@@ -158,7 +166,7 @@ def plot_all(
         "attitude",
         "Attitude Time History",
         "[deg]",
-        saved[2],
+        saved[3],
         angle_degrees=True,
     )
     plot_vector_history(
@@ -166,7 +174,7 @@ def plot_all(
         "rate",
         "Body Rate Time History",
         "[deg/s]",
-        saved[3],
+        saved[4],
         angle_degrees=True,
     )
     return saved
