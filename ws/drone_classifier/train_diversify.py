@@ -16,6 +16,7 @@ import sys
 import json
 import random
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -73,6 +74,19 @@ KNN_K      = 5    # k-th nearest neighbor for OOD scoring
 #                   prevents short flights from being unfairly rejected by a fixed count)
 MIL_MIN_VALID = 3     # statistical floor (keep small; fraction does the real gating)
 MIL_MIN_FRAC  = 0.15  # require n_valid/n_total ≥ this (length-elastic quorum)
+
+# ── Dual-path BN (AdaBN, Li et al. 2017) ──────────────────────────────────────
+# OOD path always uses original SITL BatchNorm stats (eval mode) so the kNN-OOD
+# gate keeps its SITL reference. Classification path can adapt BN to the real
+# domain (unsupervised, label-free) to bridge the Sim2Real shift before classifying.
+#   "off"        — classification also uses SITL BN (baseline)
+#   "offline"    — BN stats estimated ONCE from a MIXED-class pool of real windows
+#                  (works: pool contains both firmwares so class shift is preserved)
+#   "per_flight" — BN stats from each flight's own windows (FAILS here: a flight is
+#                  single-class, so BN centers away the class signal — kept for study)
+ADABN_MODE    = "off"   # experiments showed AdaBN doesn't recover ArduPilot here;
+                        # "offline"/"per_flight" kept available for study
+ADABN_MIN_WIN = 4       # need ≥ this many windows for stable batch BN stats, else fall back
 
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda")
@@ -589,13 +603,119 @@ def compute_rejection_rate(model, loader, banks, threshold):
     return rejected / max(total, 1)
 
 
+@contextmanager
+def _adabn_classification(model):
+    """
+    Per-flight AdaBN for the classification path (featurizer + bottleneck only).
+
+    Sets those BatchNorm1d layers to train mode so a forward pass normalizes with
+    the CURRENT batch (= this flight's windows) statistics instead of the stored
+    SITL running stats. Original running_mean/var/num_batches are saved and
+    restored on exit, so the OOD path (which calls extract_ood_features in eval
+    mode) keeps its untouched SITL BN reference.
+    """
+    bn = [m for mod in (model.featurizer, model.bottleneck)
+          for m in mod.modules() if isinstance(m, nn.BatchNorm1d)]
+    saved = [(m.training,
+              None if m.running_mean is None else m.running_mean.clone(),
+              None if m.running_var  is None else m.running_var.clone(),
+              None if m.num_batches_tracked is None else m.num_batches_tracked.clone())
+             for m in bn]
+    try:
+        for m in bn:
+            m.train()                # use batch statistics for this forward
+        yield
+    finally:
+        for m, (tr, rm, rv, nb) in zip(bn, saved):
+            m.train(tr)
+            if rm is not None: m.running_mean.copy_(rm)
+            if rv is not None: m.running_var.copy_(rv)
+            if nb is not None: m.num_batches_tracked.copy_(nb)
+
+
+def _classification_bn(model):
+    return [m for mod in (model.featurizer, model.bottleneck)
+            for m in mod.modules() if isinstance(m, nn.BatchNorm1d)]
+
+
+@torch.no_grad()
+def compute_adabn_stats(model, pool_x, bs=256):
+    """
+    Offline AdaBN: estimate classification-path BN stats from a MIXED-class pool of
+    real windows (cumulative mean/var over the pool). Returns a list of (mean, var)
+    aligned with _classification_bn(model); the model is left unmodified.
+    """
+    bn = _classification_bn(model)
+    saved = [(m.running_mean.clone(), m.running_var.clone(),
+              m.num_batches_tracked.clone(), m.momentum, m.training) for m in bn]
+    for m in bn:
+        m.reset_running_stats(); m.momentum = None; m.train()   # momentum=None → cumulative avg
+    for i in range(0, len(pool_x), bs):
+        model.bottleneck(model.featurizer(pool_x[i:i + bs].to(DEVICE)))
+    adapted = [(m.running_mean.clone(), m.running_var.clone()) for m in bn]
+    for m, (rm, rv, nb, mom, tr) in zip(bn, saved):
+        m.running_mean.copy_(rm); m.running_var.copy_(rv)
+        m.num_batches_tracked.copy_(nb); m.momentum = mom; m.train(tr)
+    return adapted
+
+
+@contextmanager
+def _apply_adabn_stats(model, adapted):
+    """Temporarily swap in pre-computed adapted BN stats (eval mode) for the
+    classification path; restore the SITL stats on exit (OOD path unaffected)."""
+    bn = _classification_bn(model)
+    saved = [(m.running_mean.clone(), m.running_var.clone(), m.training) for m in bn]
+    try:
+        for m, (am, av) in zip(bn, adapted):
+            m.running_mean.copy_(am); m.running_var.copy_(av); m.eval()
+        yield
+    finally:
+        for m, (rm, rv, tr) in zip(bn, saved):
+            m.running_mean.copy_(rm); m.running_var.copy_(rv); m.train(tr)
+
+
+@contextmanager
+def _adabn_var_only(model, x):
+    """
+    Per-flight VARIANCE-only AdaBN: adapt BN running_var to THIS flight's window
+    statistics but keep the SITL running_mean. Since a flight is single-class, the
+    mean carries the class signal — keeping SITL mean avoids the per-flight collapse
+    while still rescaling to the real domain. (Two-pass approximation: the per-layer
+    variance is captured under the flight's own mean, then applied with the SITL mean.)
+    """
+    bn = _classification_bn(model)
+    saved = [(m.running_mean.clone(), m.running_var.clone(),
+              m.num_batches_tracked.clone(), m.momentum, m.training) for m in bn]
+    # pass 1: capture this flight's per-layer variance (cumulative over the batch)
+    for m in bn:
+        m.reset_running_stats(); m.momentum = None; m.train()
+    with torch.no_grad():
+        model.bottleneck(model.featurizer(x))
+    flight_var = [m.running_var.clone() for m in bn]
+    try:
+        # pass 2: SITL mean + this-flight variance, eval mode
+        for m, (rm, rv, nb, mom, tr), fv in zip(bn, saved, flight_var):
+            m.running_mean.copy_(rm)        # keep SITL mean (preserves class signal)
+            m.running_var.copy_(fv)         # adapt variance to this flight
+            m.num_batches_tracked.copy_(nb); m.momentum = mom; m.eval()
+        yield
+    finally:
+        for m, (rm, rv, nb, mom, tr) in zip(bn, saved):
+            m.running_mean.copy_(rm); m.running_var.copy_(rv)
+            m.num_batches_tracked.copy_(nb); m.momentum = mom; m.train(tr)
+
+
 def evaluate_realflight(model, csv_files, banks, threshold):
     """
     Count-based Multiple Instance Learning (Weidmann 2003; Foulds & Frank 2010).
     Each flight is a bag; each window is an instance.
 
+    Dual-path BN (ADABN_MODE):
+      * OOD path        — always original SITL BN (eval) → extract_ood_features → kNN
+      * Classification  — SITL BN ("off") / offline pooled AdaBN / per-flight AdaBN
+
     For each real-flight CSV:
-      1. window → bottleneck z
+      1. window → bottleneck z   (OOD path, SITL BN)
       2. kNN OOD score = distance to k-th nearest training neighbor
       3. Instance is VALID (in-distribution) if score <= threshold
       4. MIL quorum: assign a class only if n_valid >= MIL_MIN_VALID
@@ -603,47 +723,68 @@ def evaluate_realflight(model, csv_files, banks, threshold):
       5. Among valid instances only, decide PX4 vs ArduPilot by majority.
     """
     model.eval()
+
+    # ── pass 1: load every flight's windows; accumulate a mixed-class real pool ──
+    flights = []   # (fname, X)
+    for csv_path in sorted(csv_files):
+        fname = Path(csv_path).name
+        segments = process_rosbag_flight_data(str(csv_path))
+        if not segments:
+            print(f"  [SKIP] {fname}  (no valid segments)")
+            continue
+        all_wins = []
+        for seg_info in segments:
+            feat = seg_info['data'][4]
+            if feat is None or len(feat) < MIN_WIN:
+                continue
+            all_wins.extend(_slide_windows(feat))
+        if not all_wins:
+            print(f"  [SKIP] {fname}  (no windows)")
+            continue
+        flights.append((fname, torch.stack(all_wins).to(DEVICE)))
+
+    # ── offline AdaBN: estimate classification BN stats once from the mixed pool ─
+    adapted = None
+    with torch.no_grad():
+        if ADABN_MODE == "offline":
+            pool = torch.cat([X for _, X in flights], dim=0)
+            if len(pool) >= ADABN_MIN_WIN:
+                adapted = compute_adabn_stats(model, pool)
+
+    # ── pass 2: per flight — OOD gate (SITL BN) + MIL + classification ───────────
     results = []
     with torch.no_grad():
-        for csv_path in sorted(csv_files):
-            fname = Path(csv_path).name
-            segments = process_rosbag_flight_data(str(csv_path))
-            if not segments:
-                print(f"  [SKIP] {fname}  (no valid segments)")
-                continue
-
-            all_wins = []
-            for seg_info in segments:
-                feat = seg_info['data'][4]
-                if feat is None or len(feat) < MIN_WIN:
-                    continue
-                all_wins.extend(_slide_windows(feat))
-            if not all_wins:
-                print(f"  [SKIP] {fname}  (no windows)")
-                continue
-
-            X          = torch.stack(all_wins).to(DEVICE)
-            z_list     = model.extract_ood_features(X)      # [z_l1, z_bn]
-            z_bn       = z_list[1]                           # bottleneck for classifier
-            d          = _knn_score(z_list, banks)           # (N,)
-            mask       = (d <= threshold)                    # valid (in-distribution) instances
+        for fname, X in flights:
+            # OOD path: original SITL BN (eval)
+            z_list = model.extract_ood_features(X)      # [z_l1, z_bn] SITL-BN
+            d      = _knn_score(z_list, banks)
+            mask   = (d <= threshold)                   # valid (in-distribution) instances
             n_rej  = int((~mask).sum())
             n_acc  = int(mask.sum())
             d_mean = float(d.mean())
-            n_tot  = len(all_wins)
+            n_tot  = len(X)
 
-            # ── count-based MIL quorum ────────────────────────────────────────
             quorum_ok = (n_acc >= MIL_MIN_VALID) and (n_acc / n_tot >= MIL_MIN_FRAC)
             if not quorum_ok:
-                # too few valid windows → not enough evidence to classify the bag
                 verdict, p_px4 = "Unknown", float("nan")
                 n_px4 = n_ardu = 0
             else:
-                probs_in = F.softmax(model.classifier(z_bn[mask]), dim=1)[:, 1].cpu().numpy()
+                # classification path BN per ADABN_MODE
+                if ADABN_MODE == "offline" and adapted is not None:
+                    with _apply_adabn_stats(model, adapted):
+                        logits = model.classifier(model.bottleneck(model.featurizer(X)))
+                elif ADABN_MODE == "per_flight" and n_tot >= ADABN_MIN_WIN:
+                    with _adabn_classification(model):
+                        logits = model.classifier(model.bottleneck(model.featurizer(X)))
+                elif ADABN_MODE == "per_flight_var" and n_tot >= ADABN_MIN_WIN:
+                    with _adabn_var_only(model, X):
+                        logits = model.classifier(model.bottleneck(model.featurizer(X)))
+                else:   # "off" or fallback
+                    logits = model.classifier(z_list[1])
+                probs_in = F.softmax(logits[mask], dim=1)[:, 1].cpu().numpy()
                 p_px4    = float(probs_in.mean())
                 n_px4    = int((probs_in > 0.5).sum())
                 n_ardu   = n_acc - n_px4
-                # majority among VALID instances only (Unknown no longer competes)
                 verdict  = "PX4" if n_px4 >= n_ardu else "ArduPilot"
 
             print(f"  {fname:<50s}  kNN={d_mean:.3f}  valid={n_acc}/{n_tot}"
@@ -651,12 +792,12 @@ def evaluate_realflight(model, csv_files, banks, threshold):
             results.append({"file": fname, "prediction": verdict,
                 "px4_prob":    round(p_px4, 3) if not np.isnan(p_px4) else None,
                 "knn_dist":    round(d_mean, 4),
-                "n_windows":   len(all_wins),
+                "n_windows":   n_tot,
                 "n_accepted":  n_acc,
                 "n_rejected":  n_rej,
                 "n_px4":       n_px4,
                 "n_ardu":      n_ardu,
-                "reject_rate": round(n_rej / len(all_wins), 4)})
+                "reject_rate": round(n_rej / n_tot, 4)})
     model.train()
     return results
 
@@ -682,6 +823,7 @@ def main():
         "batch_size": BATCH_SIZE, "seed": SEED, "min_win": MIN_WIN,
         "ood_pctile": OOD_PCTILE, "knn_k": KNN_K,
         "mil_min_valid": MIL_MIN_VALID, "mil_min_frac": MIL_MIN_FRAC,
+        "adabn_mode": ADABN_MODE,
         "git_sha": GIT_SHA,
     }
     if wandb.run is None:

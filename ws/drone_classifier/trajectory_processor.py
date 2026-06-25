@@ -156,10 +156,12 @@ def resample_and_extract_features(t,
 
     if len(t_resampled) < 2: return None
     
-    # Trajectory re-sampling
-    x_resampled = interp1d(t, x, bounds_error=True, fill_value=(x[0], x[-1]))(t_resampled)
-    y_resampled = interp1d(t, y, bounds_error=True, fill_value=(y[0], y[-1]))(t_resampled)
-    z_resampled = interp1d(t, z, bounds_error=True, fill_value=(z[0], z[-1]))(t_resampled)
+    # Trajectory re-sampling. bounds_error=False so float-epsilon overshoot at the
+    # tail of np.arange (t_new slightly > t[-1]) clamps to the endpoint via fill_value
+    # instead of raising — otherwise valid logs get dropped.
+    x_resampled = interp1d(t, x, bounds_error=False, fill_value=(x[0], x[-1]))(t_resampled)
+    y_resampled = interp1d(t, y, bounds_error=False, fill_value=(y[0], y[-1]))(t_resampled)
+    z_resampled = interp1d(t, z, bounds_error=False, fill_value=(z[0], z[-1]))(t_resampled)
 
     # Inject Gaussian position noise before smoothing to simulate camera/mocap odometry.
     # The SG filter suppresses high-freq components but preserves the elevated
