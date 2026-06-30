@@ -18,11 +18,17 @@ test_files = [
     "./data/260527_flight_logs_1/run_003/px4_logs/processed/px4_traj1_trajectory.csv"
 ]
 
-output_dir = Path("results/feature_builder_test_viz")
-output_dir.mkdir(parents=True, exist_ok=True)
+# output_dir = Path("results/feature_builder_test_viz")
 
 for file_path_str in test_files:
     file_path = Path(file_path_str)
+    base_dir = Path(*file_path.parts[:2])
+    dataset_name = file_path.parts[2]
+    run_name = file_path.parts[3]
+    output_dir = base_dir / f"{dataset_name}_viz" / run_name 
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[Info] Output directory: {output_dir}")
+
     print(f"\n{'='*70}\n[Processing] {file_path.name}\n{'='*70}")
     
     # 1. Raw 데이터 파싱 (1번 모듈)

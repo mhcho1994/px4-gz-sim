@@ -4,12 +4,12 @@ import numpy as np
 # [Module 1] Motion Primitive Probability & HMM Smoothing
 # ==============================================================================
 
-def _calculate_emission_probs(features, hover_thresh=0.5, pitch_takeoff=45.0, 
-                              pitch_landing=-45.0, vz_takeoff=0.5, vz_landing=-0.5, 
+def _calculate_emission_probs(features, hover_thresh=0.5, pitch_ascending=45.0, 
+                              pitch_descending=-45.0, vz_ascending=0.5, vz_descending=-0.5, 
                               turn_sharpness=0.01):
     """
     Computes a soft probability distribution over 6 motion primitives.
-    States: 0:Hovering, 1:Take-off, 2:Landing, 3:Straight, 4:Left_Turn, 5:Right_Turn
+    States: 0:Hovering, 1:Ascending, 2:Descending, 3:Straight, 4:Left_Turn, 5:Right_Turn
     """
     n_frames = len(features['t_window'])
     prob_matrix = np.zeros((n_frames, 6))
@@ -26,11 +26,11 @@ def _calculate_emission_probs(features, hover_thresh=0.5, pitch_takeoff=45.0,
         # 1. Hovering Score
         scores[0] = max(0.0, 1 - (speed_3d / hover_thresh))
 
-        # 2 & 3. Take-off and Landing Scores
+        # 2 & 3. Ascending and Descending Scores
         if pitch > 0 and vz > 0:
-            scores[1] = min(1.0, pitch / pitch_takeoff) * min(1.0, vz / vz_takeoff)
+            scores[1] = min(1.0, pitch / pitch_ascending) * min(1.0, vz / vz_ascending)
         elif pitch < 0 and vz < 0:
-            scores[2] = min(1.0, pitch / pitch_landing) * min(1.0, vz / vz_landing)
+            scores[2] = min(1.0, pitch / pitch_descending) * min(1.0, vz / vz_descending)
 
         # 4 & 5. Turn Left / Right Scores
         turn_score = min(1.0, sharpness / (turn_sharpness * 1.0))
@@ -54,7 +54,8 @@ def _smooth_with_viterbi(emission_probs):
     Decodes the most likely sequence of primitives using Viterbi algorithm.
     """
     n_frames, n_states = emission_probs.shape
-    pi = np.array([0.7, 0.3, 0.0, 0.0, 0.0, 0.0]) # Initial probs
+    # pi = np.array([0.3, 0.7, 0.0, 0.0, 0.0, 0.0]) # Initial probs
+    pi = np.array([0.3, 0.3, 0.1, 0.1, 0.1, 0.1]) # Initial probs
     
     # Transition Matrix A (Physical Rules Engine)
     # A = np.array([
@@ -84,12 +85,21 @@ def _smooth_with_viterbi(emission_probs):
     #     [0.00, 0.00, 0.00, 0.25, 0.65, 0.10], # Left_Turn
     #     [0.00, 0.00, 0.00, 0.25, 0.10, 0.65]  # Right_Turn
     # ])
+    # A = np.array([
+    #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
+    #     [0.70, 0.10, 0.10, 0.10, 0.00, 0.00], # Hover
+    #     [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
+    #     [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
+    #     [0.00, 0.00, 0.05, 0.65, 0.15, 0.15], # Straight
+    #     [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
+    #     [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
+    # ])
     A = np.array([
         # Hov,  Tkf,  Lnd,  Str,   LT,   RT
         [0.70, 0.10, 0.10, 0.10, 0.00, 0.00], # Hover
         [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
         [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
-        [0.00, 0.00, 0.05, 0.65, 0.15, 0.15], # Straight
+        [0.15, 0.00, 0.05, 0.50, 0.15, 0.15], # Straight
         [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
         [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
     ])
@@ -113,7 +123,7 @@ def _smooth_with_viterbi(emission_probs):
     for t in range(n_frames - 2, -1, -1):
         best_path[t] = ptr[t+1, best_path[t+1]]
         
-    state_names = ["hovering", "takeoff", "landing", "straight", "turn_left", "turn_right"]
+    state_names = ["hovering", "ascending", "descending", "straight", "turn_left", "turn_right"]
     return np.array([state_names[idx] for idx in best_path])
 
 
@@ -130,9 +140,9 @@ def extract_segments(features_dict, dt=None, min_turn_duration=None,
     Note: Legacy arguments (dt, yaw_rate_threshold, etc.) are ignored as the new
     pipeline relies on PCA, Regression, and HMM parameters internally.
     """
-    # Output structure identical to legacy code
-    spans = {'takeoff': None, 'landing': None, 'straight': [], 'turn_left': [], 'turn_right': []}
-    segments = {'takeoff': None, 'landing': None, 'straight': [], 'turn_left': [], 'turn_right': []}
+    # Output structure identical to legacy code (now including hovering)
+    spans = {'ascending': [], 'descending': [], 'straight': [], 'turn_left': [], 'turn_right': [], 'hovering': []}
+    segments = {'ascending': [], 'descending': [], 'straight': [], 'turn_left': [], 'turn_right': [], 'hovering': []}
 
     if features_dict is None or len(features_dict['t_window']) < 2:
         return segments, spans
@@ -153,7 +163,8 @@ def extract_segments(features_dict, dt=None, min_turn_duration=None,
         # Trigger block extraction if label changes OR end of array is reached
         if i == n_frames or smoothed_labels[i] != current_label:
             end_idx = i - 1
-            span = (t_window[start_idx], t_window[end_idx])
+            span_end_time = t_window[i] if i < n_frames else t_window[end_idx]
+            span = (t_window[start_idx], span_end_time)
             
             # Reconstruct a subset of the feature dictionary for this block
             # (Matches the legacy expectation of providing subset features)
@@ -166,17 +177,9 @@ def extract_segments(features_dict, dt=None, min_turn_duration=None,
                 'span': span
             }
 
-            # Map to dictionary keys
-            if current_label in ['takeoff', 'landing']:
-                # The legacy code assumed only one takeoff/landing per flight
-                # We overwrite with the latest occurrence, or you could append if needed.
-                spans[current_label] = span
-                segments[current_label] = segment_data
-            elif current_label in ['straight', 'turn_left', 'turn_right']:
-                spans[current_label].append(span)
-                segments[current_label].append(segment_data)
-            # 'hovering' blocks are intentionally omitted from output to match legacy,
-            # unless you want to add a 'hovering' key to the dictionary.
+            # Map to dictionary keys (all are lists now)
+            spans[current_label].append(span)
+            segments[current_label].append(segment_data)
 
             # Reset for the next block
             if i < n_frames:
@@ -211,25 +214,57 @@ if __name__ == "__main__":
             
             # 3. Calculate emission probabilities
             probs = _calculate_emission_probs(features)
+            viterbi_labels = _smooth_with_viterbi(probs)
             
             t = features['t_window']
-            state_names = ["Hovering", "Take-off", "Landing", "Straight", "Left Turn", "Right Turn"]
-            colors = ['tab:gray', 'tab:orange', 'tab:brown', 'tab:green', 'tab:blue', 'tab:purple']
+            state_config = {
+                0: {'key': 'hovering',   'name': 'Hovering',   'color': 'tab:gray'},
+                1: {'key': 'ascending',  'name': 'Ascending',  'color': 'tab:orange'},
+                2: {'key': 'descending', 'name': 'Descending', 'color': 'tab:blue'},
+                3: {'key': 'straight',   'name': 'Straight',   'color': 'tab:green'},
+                4: {'key': 'turn_left',  'name': 'Left Turn',  'color': 'tab:purple'},
+                5: {'key': 'turn_right', 'name': 'Right Turn', 'color': 'tab:brown'}
+            }
 
-            # 4. Create plot using a stacked area chart to see the probability distribution
-            plt.figure(figsize=(14, 8))
-            plt.stackplot(t, probs.T, labels=state_names, colors=colors, alpha=0.8)
-            plt.title('HMM Emission Probabilities over Time', fontsize=16, fontweight='bold')
-            plt.xlabel('Time (s)')
-            plt.ylabel('Probability')
-            plt.ylim(0, 1.0)
-            plt.xlim(t[0], t[-1])
-            plt.legend(loc='upper right')
-            plt.grid(True, linestyle='--', alpha=0.4)
+
+            state_names = [state_config[i]['name'] for i in range(6)]
+            colors = [state_config[i]['color'] for i in range(6)]
+            label_map = {state_config[i]['key']: i for i in range(6)}
+            numeric_labels = [label_map[l] for l in viterbi_labels]
+
+
+            # 4. Create plot using subplots
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), gridspec_kw={'height_ratios': [3, 1.2]}, sharex=True)
+            
+            # Subplot 1: Stacked area chart for emission probabilities
+            ax1.stackplot(t, probs.T, labels=state_names, colors=colors, alpha=0.8)
+            ax1.set_title('HMM Emission Probabilities & Viterbi Decoding over Time', fontsize=16, fontweight='bold')
+            ax1.set_ylabel('Probability')
+            ax1.set_ylim(0, 1.0)
+            ax1.set_xlim(t[0], t[-1])
+            ax1.legend(loc='upper right')
+            ax1.grid(True, linestyle='--', alpha=0.4)
+            
+            # Subplot 2: Viterbi Decoded State
+            ax2.step(t, numeric_labels, where='post', color='black', linewidth=1.5, zorder=2)
+            
+            # Color background spans for better visibility
+            start_idx = 0
+            for i in range(1, len(t)):
+                if numeric_labels[i] != numeric_labels[i-1] or i == len(t)-1:
+                    ax2.axvspan(t[start_idx], t[i], color=colors[numeric_labels[start_idx]], alpha=0.4, lw=0, zorder=1)
+                    start_idx = i
+                    
+            ax2.set_yticks(range(6))
+            ax2.set_yticklabels(state_names)
+            ax2.set_ylabel('Viterbi State')
+            ax2.set_xlabel('Time (s)')
+            ax2.grid(True, linestyle='--', alpha=0.4, axis='x')
             
             plt.tight_layout()
             
             # Save and optionally display
             save_file = "emission_probs_test_result.png"
             plt.savefig(save_file, dpi=300)
+            plt.close()
             print(f"[Success] Plot saved to '{save_file}'")
