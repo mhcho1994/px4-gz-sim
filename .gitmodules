@@ -7,3 +7,8 @@
 	path = ap/ardupilot
 	url = https://github.com/mhcho1994/ardupilot.git
 	branch = Copter-4.6.2-MOTIF
+
+[submodule "ardupilot_gazebo"]
+	path = gz/ardupilot_gazebo
+	url = https://github.com/mhcho1994/ardupilot_gazebo.git
+	branch = moonshot

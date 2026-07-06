@@ -10,8 +10,9 @@
 # ROS2 workspace (build/install/log can be large and environment-specific)
 /ros2
 
-# Gazebo source or workspace (can be rebuilt locally)
-/gz
+# Gazebo source or workspace (can be rebuilt locally, submodules or setup scripts are preferred)
+/gz/*
+!/gz/ardupilot_gazebo
 
 # QGroundControl binaries/tools (platform-dependent, not needed in repo)
 /tools/QGC
