@@ -4,14 +4,24 @@ from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, accuracy_score
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 # Import common evaluation utilities
 from evaluation_utils import plot_confusion_matrix, plot_pca_2d_projection, print_detailed_prediction_map
+import config
+
+import argparse
 
 def main():
-    cache_dir = Path("ws/drone_classifier_modules/cache")
-    sitl_cache = cache_dir / "sitl_features.npz"
-    real_cache = cache_dir / "real_features.npz"
+    parser = argparse.ArgumentParser(description="Train SVM Model on SITL features and evaluate on Real Data.")
+    parser.add_argument("--sitl-folder", type=str, default=config.SITL_FOLDER, help="Name of the SITL folder to load features from.")
+    parser.add_argument("--no-real", action="store_true", help="Disable evaluation on real flight data.")
+    args = parser.parse_args()
+
+    cache_dir = config.CACHE_DIR
+    sitl_cache = cache_dir / f"{args.sitl_folder}_features.npz"
 
     # =====================================================================
     # 1. Load Pre-extracted Features
@@ -48,7 +58,11 @@ def main():
     # =====================================================================
     # 3. Evaluate on Real Flight Data
     # =====================================================================
-    test_folders = ["260417_flight_logs", "260424_flight_logs", "260501_flight_logs_old"]
+    if args.no_real:
+        print("\n[Info] Skipping real flight evaluation as requested.")
+        return
+
+    test_folders = config.REAL_FLIGHT_FOLDERS
     
     X_real_list, y_real_list, runs_real_list = [], [], []
 

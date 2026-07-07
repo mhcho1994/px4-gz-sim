@@ -1,13 +1,20 @@
+import sys
+import os
+import argparse
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+
 import data_extractor
 import kinematic_processor
 import flight_segmenter
 from pathlib import Path
 
-# For visualization, import the legacy processor and the plotting script
-import kinematic_processor_legacy
 import generate_visualizations
 
-test_files = [
+parser = argparse.ArgumentParser(description="Test feature builder parameters on specific logs.")
+parser.add_argument('--files', nargs='*', help='List of log files to process. If not provided, default test files will be used.')
+args = parser.parse_args()
+
+default_test_files = [
     "./data/sitl_logs/run_000/px4_logs/raw/02_34_26.ulg",
     "./data/sitl_logs/run_003/px4_logs/raw/02_39_52.ulg",
     "./data/sitl_logs/run_001/ardu_logs/raw/logs/00000001.BIN",
@@ -18,7 +25,7 @@ test_files = [
     "./data/260527_flight_logs_1/run_003/px4_logs/processed/px4_traj1_trajectory.csv"
 ]
 
-# output_dir = Path("results/feature_builder_test_viz")
+test_files = args.files if args.files else default_test_files
 
 for file_path_str in test_files:
     file_path = Path(file_path_str)
@@ -49,7 +56,7 @@ for file_path_str in test_files:
         continue
 
     # 2. 50Hz 보간 및 PCA 특징 추출 (2번 모듈 통합본)
-    kinematic_features = kinematic_processor.compute_kinematics(raw_flight_data)
+    kinematic_features = kinematic_processor.compute_kinematics_pca(raw_flight_data)
     if kinematic_features is None:
         print(f"[Error] 특징 추출(Kinematics)에 실패했습니다: {file_path.name}")
         continue
@@ -60,7 +67,7 @@ for file_path_str in test_files:
 
     # 4. Visualize the segmentation results
     print("[Info] Generating visualization of flight segments...")
-    t_full, feat_full = kinematic_processor_legacy.compute_kinematics(raw_flight_data)
+    t_full, feat_full = kinematic_processor.compute_kinematics_diff(raw_flight_data)
 
     # 파일별로 이미지가 덮어씌워지지 않도록 상위 경로를 포함하여 고유한 파일명 지정
     unique_prefix = "_".join(file_path.parts[-4:-1])

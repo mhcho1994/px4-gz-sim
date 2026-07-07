@@ -1,4 +1,5 @@
 import numpy as np
+import config
 
 # ==============================================================================
 # [Module 1] Motion Primitive Probability & HMM Smoothing
@@ -54,55 +55,10 @@ def _smooth_with_viterbi(emission_probs):
     Decodes the most likely sequence of primitives using Viterbi algorithm.
     """
     n_frames, n_states = emission_probs.shape
-    # pi = np.array([0.3, 0.7, 0.0, 0.0, 0.0, 0.0]) # Initial probs
-    pi = np.array([0.3, 0.3, 0.1, 0.1, 0.1, 0.1]) # Initial probs
+    pi = config.HMM_PI # Initial probs
     
     # Transition Matrix A (Physical Rules Engine)
-    # A = np.array([
-    #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
-    #     [0.80, 0.10, 0.10, 0.00, 0.00, 0.00], # Hover
-    #     [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
-    #     [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
-    #     [0.00, 0.00, 0.05, 0.65, 0.15, 0.15], # Straight
-    #     [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
-    #     [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
-    # ])
-    # A = np.array([
-    #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
-    #     [0.25, 0.15, 0.15, 0.15, 0.15, 0.15], # Hover
-    #     [0.15, 0.25, 0.15, 0.15, 0.15, 0.15], # Take-off
-    #     [0.15, 0.15, 0.25, 0.15, 0.15, 0.15], # Landing
-    #     [0.15, 0.15, 0.15, 0.25, 0.15, 0.15], # Straight
-    #     [0.15, 0.15, 0.15, 0.15, 0.25, 0.15], # Left_Turn
-    #     [0.15, 0.15, 0.15, 0.15, 0.15, 0.25]  # Right_Turn
-    # ])
-    # A = np.array([
-    #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
-    #     [0.80, 0.20, 0.00, 0.00, 0.00, 0.00], # Hover
-    #     [0.00, 0.70, 0.00, 0.30, 0.00, 0.00], # Take-off
-    #     [0.30, 0.00, 0.70, 0.00, 0.00, 0.00], # Landing
-    #     [0.00, 0.00, 0.05, 0.65, 0.15, 0.15], # Straight
-    #     [0.00, 0.00, 0.00, 0.25, 0.65, 0.10], # Left_Turn
-    #     [0.00, 0.00, 0.00, 0.25, 0.10, 0.65]  # Right_Turn
-    # ])
-    # A = np.array([
-    #     # Hov,  Tkf,  Lnd,  Str,   LT,   RT
-    #     [0.70, 0.10, 0.10, 0.10, 0.00, 0.00], # Hover
-    #     [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
-    #     [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
-    #     [0.00, 0.00, 0.05, 0.65, 0.15, 0.15], # Straight
-    #     [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
-    #     [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
-    # ])
-    A = np.array([
-        # Hov,  Tkf,  Lnd,  Str,   LT,   RT
-        [0.70, 0.10, 0.10, 0.10, 0.00, 0.00], # Hover
-        [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
-        [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
-        [0.15, 0.00, 0.05, 0.50, 0.15, 0.15], # Straight
-        [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
-        [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
-    ])
+    A = config.HMM_A
     
     eps = 1e-10
     log_pi, log_A, log_B = np.log(pi + eps), np.log(A + eps), np.log(emission_probs + eps)
@@ -205,7 +161,7 @@ if __name__ == "__main__":
         print("[Info] Data successfully extracted. Processing kinematics...")
         
         # 2. Extract features
-        features = kinematic_processor.compute_kinematics(raw_flight_data)
+        features = kinematic_processor.compute_kinematics_pca(raw_flight_data)
 
         if features is None:
             print("[Error] Could not process kinematics (insufficient data).")

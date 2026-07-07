@@ -7,9 +7,13 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, accuracy_score
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 # Import your existing evaluation utilities
 from evaluation_utils import plot_confusion_matrix, plot_pca_2d_projection, print_detailed_prediction_map
+import config
 
 # =====================================================================
 # 1. Define 1D-CNN Model Architecture
@@ -72,17 +76,26 @@ def scale_3d_sequences(X_train, X_test, X_real=None):
         
     return X_train_scaled, X_test_scaled, X_real_scaled
 
+import argparse
+
 # =====================================================================
 # 3. Main Execution Pipeline
 # =====================================================================
 def main():
+    parser = argparse.ArgumentParser(description="Train 1D-CNN Model.")
+    parser.add_argument("--sitl-folder", type=str, default=config.SITL_FOLDER, help="Name of the SITL folder.")
+    parser.add_argument("--epochs", type=int, default=config.EPOCHS, help="Number of training epochs.")
+    parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE, help="Batch size for training.")
+    parser.add_argument("--lr", type=float, default=config.LEARNING_RATE, help="Learning rate.")
+    parser.add_argument("--no-real", action="store_true", help="Disable evaluation on real flight data.")
+    args = parser.parse_args()
+
     # Adjust cache directory if necessary based on your folder structure
-    cache_dir = Path("ws/drone_classifier_modules/cache") 
-    sitl_cache = cache_dir / "sitl_features.npz"
-    # real_cache = cache_dir / "real_features.npz"
+    cache_dir = config.CACHE_DIR 
+    sitl_cache = cache_dir / f"{args.sitl_folder}_features.npz"
 
     if not sitl_cache.exists():
-        print("[Error] Cache file not found. Please run 'feature_builder.py' first.")
+        print("[Error] Cache file not found. Please run 'build_features.py' first.")
         return
 
     # 1. Load Padded Sequence Data
@@ -91,16 +104,17 @@ def main():
     X_sitl_seq, y_sitl = sitl_data['X_seq'], sitl_data['y'] 
     
     # 2. Load multiple real flight datasets if available
-    test_folders = ["260417_flight_logs", "260424_flight_logs", "260501_flight_logs_old"]
     X_real_seq_list, y_real_list, runs_real_list = [], [], []
-    for folder in test_folders:
-        real_cache = cache_dir / f"{folder}_features.npz"
-        if real_cache.exists():
-            real_data = np.load(real_cache)
-            X_real_seq_list.append(real_data['X_seq'])
-            y_real_list.append(real_data['y'])
-            runs_real_list.append(real_data['runs'])
-            print(f"  -> Loaded '{folder}' features.")
+    if not args.no_real:
+        test_folders = config.REAL_FLIGHT_FOLDERS
+        for folder in test_folders:
+            real_cache = cache_dir / f"{folder}_features.npz"
+            if real_cache.exists():
+                real_data = np.load(real_cache)
+                X_real_seq_list.append(real_data['X_seq'])
+                y_real_list.append(real_data['y'])
+                runs_real_list.append(real_data['runs'])
+                print(f"  -> Loaded '{folder}' features.")
 
     if len(X_real_seq_list) > 0:
         # Concatenate multiple real datasets and ensure consistent sequence lengths by padding
@@ -117,12 +131,6 @@ def main():
     else:
         X_real_seq, y_real, runs_real = None, None, None
 
-        
-    # X_real_seq, y_real, runs_real = None, None, None
-    # if real_cache.exists():
-    #     real_data = np.load(real_cache)
-    #     X_real_seq, y_real, runs_real = real_data['X_seq'], real_data['y'], real_data['runs']
-
     # 2. Train/Test Split & Standard Scaling
     X_train, X_test, y_train, y_test = train_test_split(X_sitl_seq, y_sitl, test_size=0.1, random_state=42)
     X_train_s, X_test_s, X_real_s = scale_3d_sequences(X_train, X_test, X_real_seq)
@@ -135,7 +143,7 @@ def main():
 
     # Set up DataLoader for batch processing
     train_dataset = TensorDataset(X_train_t, y_train_t)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
     # 3. Model Initialization and Training Loop
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -144,9 +152,9 @@ def main():
     # Initialize model with 2 classes (PX4, ArduPilot)
     model = Drone1DCNN(num_features=3, num_classes=2).to(device) 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-    epochs = 30
+    epochs = args.epochs
     for epoch in range(epochs):
         model.train()
         for batch_x, batch_y in train_loader:

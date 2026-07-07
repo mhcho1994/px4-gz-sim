@@ -3,13 +3,11 @@ import numpy as np
 import pywt
 from pathlib import Path
 from scipy.stats import kurtosis
-import matplotlib.pyplot as plt
 
 # Import our new modular pipeline components
 from data_extractor import parse_px4_ulog, parse_ardu_bin, parse_real_csv
-import flight_segmenter
-import kinematic_processor
-import kinematic_processor_legacy
+from kinematic_processor import compute_kinematics_diff, FEATURE_MAP
+from flight_segmenter import extract_segments
 
 def compute_dwt_statistics(timeseries_matrix, waveletname='db4', level=3):
     """
@@ -64,7 +62,7 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
     and returns extracted Turn segments.
     """
     base_dir = Path("data") / base_folder
-    X_ts, T_ts, y, runs = [], [], [], []
+    X_ts, y, runs = [], [], []
     
     if not base_dir.exists():
         print(f"[Warning] Directory not found: {base_dir}")
@@ -74,7 +72,7 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
     
     # AI Classification Target Features
     target_features = ['XY-Accel', 'XY-Jerk', 'Curvature']
-    target_indices = [kinematic_processor_legacy.FEATURE_MAP[f] for f in target_features]
+    target_indices = [FEATURE_MAP[f] for f in target_features]
 
     # Firmware configuration map (name, class_label, sub_path, extension)
     fw_configs = [
@@ -105,29 +103,15 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
                     if raw_data is None: continue
                     
                     # [Step 2 & 3: Transform (Kinematics -> Segment)]
-                    # Use new kinematic processor for HMM-based segmentation
-                    kinematic_features = kinematic_processor.compute_kinematics(raw_data)
-                    if kinematic_features is None: continue
-                    segs, spans = flight_segmenter.extract_segments(kinematic_features)
+                    t_full, feat_full = compute_kinematics_diff(raw_data)
+                    segs, spans = extract_segments(t_full, feat_full)
                     
-                    # Use legacy kinematic processor for AI features extraction
-                    t_full, feat_full = kinematic_processor_legacy.compute_kinematics(raw_data)
-                    if t_full is None or feat_full is None: continue
-
                     # [Step 4: Load Turn Features]
                     count_in_run = 0
-                    turn_spans = spans.get('turn_left', []) + spans.get('turn_right', [])
-                    
-                    if len(turn_spans) > 0:
-                        for span in turn_spans:
-                            # Extract corresponding indices using time spans from the new segmenter
-                            indices = np.where((t_full >= span[0]) & (t_full <= span[1]))[0]
-                            if len(indices) == 0: continue
-                            
-                            feat_turn = feat_full[indices][:, target_indices]
-                            time_turn = t_full[indices] - t_full[indices][0]
+                    if segs and segs['turn'] and len(segs['turn']) > 0:
+                        for turn_segment in segs['turn']:
+                            feat_turn = turn_segment['features'][:, target_indices]
                             X_ts.append(feat_turn)
-                            T_ts.append(time_turn)
                             y.append(class_label)
                             runs.append(f"{base_folder}/{run_folder}")
                             count_in_run += 1
@@ -136,15 +120,15 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap'):
                         print(f"    - {run_folder} [{fw_name.upper()}]: {count_in_run} turn segments extracted.")
                     break # Process only the first valid file per firmware
 
-    return X_ts, T_ts, np.array(y), runs
+    return X_ts, np.array(y), runs
 
-def main_2():
+def main():
     cache_dir = Path("ws/drone_classifier_modules/cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Process SITL Logs
     print("\n[Info] Executing ETL Pipeline for SITL data...")
-    X_sitl_ts, _, y_sitl, _ = process_dataset_folder("sitl_logs", is_sitl=True)
+    X_sitl_ts, y_sitl, _ = process_dataset_folder("sitl_logs", is_sitl=True)
     
     if len(X_sitl_ts) > 0:
         print(f"[Info] Extracting DWT features for SITL data...")
@@ -163,7 +147,7 @@ def main_2():
     # X_real_ts, y_real_list, runs_real_list = [], [], []
     
     for folder in test_folders:
-        X_ts, _, y, runs = process_dataset_folder(folder, is_sitl=False, measurement_type='mocap')
+        X_ts, y, runs = process_dataset_folder(folder, is_sitl=False, measurement_type='mocap')
         # X_real_ts.extend(X_ts)
         # y_real_list.extend(y.tolist())
         # runs_real_list.extend(runs)
@@ -195,61 +179,6 @@ def main_2():
         print(f"[Success] Cached Real features (Shape: {X_real_dwt.shape})")
     else:
         print("[Warning] No valid real flight features extracted.")
-
-def main():
-    # 1. Process SITL Logs
-    print("\n[Info] Executing ETL Pipeline for SITL data...")
-    X_sitl_ts, T_sitl_ts, y_sitl, runs_sitl = process_dataset_folder("sitl_logs", is_sitl=True)
-    
-    target_features = ['XY-Accel', 'XY-Jerk', 'Curvature']
-    plot_dir = Path("ws/drone_classifier_modules/plots")
-    fw_map = {0: 'PX4', 1: 'ARDU', 2: 'COGNI'}
-    
-    if len(X_sitl_ts) > 0:
-        print(f"[Info] Plotting {len(X_sitl_ts)} SITL segments...")
-        sitl_plot_dir = plot_dir / "sitl"
-        sitl_plot_dir.mkdir(parents=True, exist_ok=True)
-        for i, ts in enumerate(X_sitl_ts):
-            fig, axs = plt.subplots(len(target_features), 1, figsize=(10, 8), sharex=True)
-            for j, feature_name in enumerate(target_features):
-                axs[j].plot(T_sitl_ts[i], ts[:, j], label=feature_name)
-                axs[j].set_ylabel(feature_name)
-                axs[j].legend(loc='upper right')
-                axs[j].grid(True)
-            
-            run_name = runs_sitl[i] if i < len(runs_sitl) else 'Unknown'
-            fw_name = fw_map.get(y_sitl[i], 'Unknown')
-            fig.suptitle(f"SITL Segment {i} - {run_name} ({fw_name})")
-            axs[-1].set_xlabel("Time (s)")
-            plt.tight_layout()
-            plt.savefig(sitl_plot_dir / f"segment_{i:03d}.png")
-            plt.close(fig)
-            
-    # 2. Process Real Flight Logs
-    print("\n[Info] Executing ETL Pipeline for Real flight data...")
-    test_folders = ["260527_flight_logs_1", "260527_flight_logs_2"]
-    
-    for folder in test_folders:
-        X_ts, T_ts, y, runs = process_dataset_folder(folder, is_sitl=False, measurement_type='mocap')
-        if len(X_ts) > 0:
-            print(f"[Info] Plotting {len(X_ts)} segments for {folder}...")
-            folder_plot_dir = plot_dir / folder
-            folder_plot_dir.mkdir(parents=True, exist_ok=True)
-            for i, ts in enumerate(X_ts):
-                fig, axs = plt.subplots(len(target_features), 1, figsize=(10, 8), sharex=True)
-                for j, feature_name in enumerate(target_features):
-                    axs[j].plot(T_ts[i], ts[:, j], label=feature_name)
-                    axs[j].set_ylabel(feature_name)
-                    axs[j].legend(loc='upper right')
-                    axs[j].grid(True)
-                
-                run_name = runs[i] if i < len(runs) else 'Unknown'
-                fw_name = fw_map.get(y[i], 'Unknown')
-                fig.suptitle(f"{folder} Segment {i} - {run_name} ({fw_name})")
-                axs[-1].set_xlabel("Time (s)")
-                plt.tight_layout()
-                plt.savefig(folder_plot_dir / f"segment_{i:03d}.png")
-                plt.close(fig)
 
 if __name__ == "__main__":
     main()
