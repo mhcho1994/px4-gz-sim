@@ -12,3 +12,13 @@
 	path = gz/ardupilot_gazebo
 	url = https://github.com/mhcho1994/ardupilot_gazebo.git
 	branch = moonshot
+
+[submodule "gz/SITL_Models"]
+	path = gz/SITL_Models
+	url = https://github.com/mhcho1994/SITL_Models.git
+	branch = moonshot
+
+[submodule "gz/PX4_gazebo_models"]
+	path = gz/PX4_gazebo_models
+	url = https://github.com/mhcho1994/PX4-gazebo-models.git
+	branch = moonshot

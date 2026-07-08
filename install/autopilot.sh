@@ -478,7 +478,25 @@ px4_gz_models_env() {
 # Source this file to expose PX4 Gazebo resource paths.
 
 export GZ_VERSION=${GZ_VERSION}
-export GZ_SIM_RESOURCE_PATH=${PX4_SITL_MODELS_DIR}/models:${PX4_SITL_MODELS_DIR}/worlds:\${GZ_SIM_RESOURCE_PATH}
+
+# Prepend without duplicating entries already present (avoids growth when
+# this file is re-sourced, e.g. in nested interactive shells).
+_gz_path_prepend() {
+  local -n _var="\$1"
+  local path="\$2"
+  case ":\${_var}:" in
+    *":\${path}:"*) ;;
+    *) _var="\${path}:\${_var}" ;;
+  esac
+}
+
+if [ -d "${PX4_SITL_MODELS_DIR}" ]; then
+  _gz_path_prepend GZ_SIM_RESOURCE_PATH "${PX4_SITL_MODELS_DIR}/models"
+  _gz_path_prepend GZ_SIM_RESOURCE_PATH "${PX4_SITL_MODELS_DIR}/worlds"
+fi
+
+export GZ_SIM_RESOURCE_PATH
+unset -f _gz_path_prepend
 EOF
 
   echo ""
@@ -770,12 +788,32 @@ ardupilot_gz_plugin_env() {
 # Source this file to expose ArduPilot Gazebo plugin and resource paths.
 
 export GZ_VERSION=${GZ_VERSION}
-export GZ_SIM_SYSTEM_PLUGIN_PATH=${ARDUPILOT_GZ_DIR}/build:\${GZ_SIM_SYSTEM_PLUGIN_PATH}
-export GZ_SIM_RESOURCE_PATH=${ARDUPILOT_GZ_DIR}/models:${ARDUPILOT_GZ_DIR}/worlds:\${GZ_SIM_RESOURCE_PATH}
+
+# Prepend without duplicating entries already present (avoids growth when
+# this file is re-sourced, e.g. in nested interactive shells).
+_gz_path_prepend() {
+  local -n _var="\$1"
+  local path="\$2"
+  case ":\${_var}:" in
+    *":\${path}:"*) ;;
+    *) _var="\${path}:\${_var}" ;;
+  esac
+}
+
+if [ -d "${ARDUPILOT_GZ_DIR}" ]; then
+  _gz_path_prepend GZ_SIM_SYSTEM_PLUGIN_PATH "${ARDUPILOT_GZ_DIR}/build"
+  _gz_path_prepend GZ_SIM_RESOURCE_PATH "${ARDUPILOT_GZ_DIR}/models"
+  _gz_path_prepend GZ_SIM_RESOURCE_PATH "${ARDUPILOT_GZ_DIR}/worlds"
+fi
 
 if [ -d "${ARDUPILOT_SITL_MODELS_DIR}/Gazebo" ]; then
-  export GZ_SIM_RESOURCE_PATH=${ARDUPILOT_SITL_MODELS_DIR}/Gazebo/models:${ARDUPILOT_SITL_MODELS_DIR}/Gazebo/worlds:\${GZ_SIM_RESOURCE_PATH}
+  _gz_path_prepend GZ_SIM_RESOURCE_PATH "${ARDUPILOT_SITL_MODELS_DIR}/Gazebo/models"
+  _gz_path_prepend GZ_SIM_RESOURCE_PATH "${ARDUPILOT_SITL_MODELS_DIR}/Gazebo/worlds"
 fi
+
+export GZ_SIM_SYSTEM_PLUGIN_PATH
+export GZ_SIM_RESOURCE_PATH
+unset -f _gz_path_prepend
 EOF
 
   echo ""

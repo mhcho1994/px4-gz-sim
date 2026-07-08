@@ -13,6 +13,8 @@
 # Gazebo source or workspace (can be rebuilt locally, submodules or setup scripts are preferred)
 /gz/*
 !/gz/ardupilot_gazebo
+!/gz/SITL_Models
+!/gz/PX4_gazebo_models
 
 # QGroundControl binaries/tools (platform-dependent, not needed in repo)
 /tools/QGC
