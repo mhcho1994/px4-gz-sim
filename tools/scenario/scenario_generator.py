@@ -204,7 +204,6 @@ def make_planar_n_pts(
     vertex_deg: Tuple[float, ...],
     speed_m_s: Tuple[float, ...],
     alt_m: float,
-    landing_alt_m: float = DEFAULT_LANDING_ALT_M,
     land: bool = True,
 ) -> MissionSpec:
     """
@@ -275,7 +274,7 @@ def make_planar_n_pts(
             waypoints_lla,
             speeds,
             home_position,
-            landing_alt_m,
+            alt_m,
         )
 
     assert len(commands) == len(waypoints_ned) == len(waypoints_lla) == len(speeds)
@@ -285,7 +284,7 @@ def make_planar_n_pts(
         home_position=home_position,
         command=commands,
         takeoff_alt_m=alt_m,
-        landing_alt_m=float(landing_alt_m),
+        landing_alt_m=alt_m,
         waypoints_ned=waypoints_ned,
         waypoints_lla=waypoints_lla,
         speed_m_s=speeds,
@@ -1040,7 +1039,6 @@ def main() -> int:
                 edge_m=edge_m,
                 vertex_deg=vertex_deg,
                 alt_m=alt_m,
-                landing_alt_m=args.landing_alt_m,
                 speed_m_s=speed_m_s,
                 land=args.land,
             )

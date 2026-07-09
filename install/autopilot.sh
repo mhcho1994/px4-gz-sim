@@ -45,15 +45,15 @@ WITH_PX4_MSGS="true"
 WITH_ARDUPILOT="false"
 
 # PX4
-PX4_REF="v1.16.1-MOTIF"
+PX4_REF="v1.16.2-moonshot"
 PX4_DIR="${PROJECT_ROOT}/ap/px4"
 
 # ArduPilot
-ARDUPILOT_REF="Copter-4.6.2-MOTIF"
+ARDUPILOT_REF="Copter-4.6.2-moonshot"
 ARDUPILOT_DIR="${PROJECT_ROOT}/ap/ardupilot"
 
 # px4_msgs (ROS 2 message package)
-PX4_MSGS_REF="v1.16.1"
+PX4_MSGS_REF="v1.16.2"
 PX4_MSGS_DIR="${PROJECT_ROOT}/ros2/px4_msgs_ws"
 
 # Micro XRCE-DDS Agent
