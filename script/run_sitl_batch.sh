@@ -7,4 +7,4 @@ python3 tools/scenario/scenario_generator.py planar_n_pts --outdir ./data/sitl_l
 --alt-m random --alt-m-range 2 20
 
 python3 tools/launcher/run_px4_gz_sitl.py --run-root ./data/sitl_logs --startup-delay 2 --max-run-s 300 --verbose --headless
-python3 tools/launcher/run_ardupilot_sitl.py --run-root ./data/sitl_logs --startup-delay 2 --max-run-s 300 --verbose --headless
+python3 tools/launcher/run_ardupilot_gz_sitl.py --run-root ./data/sitl_logs --startup-delay 2 --max-run-s 300 --verbose --headless
