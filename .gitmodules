@@ -1,12 +1,12 @@
 [submodule "PX4-Autopilot"]
 	path = ap/px4
 	url = https://github.com/mhcho1994/PX4-Autopilot.git
-	branch = v1.16.1-MOTIF
+	branch = v1.16.2-moonshot
 	
 [submodule "ArduPilot"]
 	path = ap/ardupilot
 	url = https://github.com/mhcho1994/ardupilot.git
-	branch = Copter-4.6.2-MOTIF
+	branch = Copter-4.6.2-moonshot
 
 [submodule "ardupilot_gazebo"]
 	path = gz/ardupilot_gazebo
