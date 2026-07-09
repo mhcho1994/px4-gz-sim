@@ -64,7 +64,7 @@ DDS_AGENT_REF=""  # auto-pick by ROS_DISTRO if empty
 DDS_AGENT_DIR="${PROJECT_ROOT}/tools/Micro-XRCE-DDS-Agent"
 
 # TODO: PX4 Gazebo models
-PX4_SITL_MODELS_DIR="${PROJECT_ROOT}/gz/PX4-gazebo-models"
+PX4_SITL_MODELS_DIR="${PROJECT_ROOT}/gz/PX4_gazebo_models"
 
 # ArduPilot Gazebo plugin + models
 GZ_VERSION="harmonic"
@@ -373,7 +373,7 @@ px4_fetch() {
   echo "==> Checking PX4 submodule/source directory"
   echo ""
 
-  ensure_submodule_present "${PX4_DIR}" "PX4"
+  ensure_submodule_present "${PX4_DIR}" "PX4-Autopilot"
 
   echo "PX4 source directory is present: ${PX4_DIR}"
 }
@@ -457,13 +457,12 @@ EOF
 # --------------------------
 px4_gz_models_fetch() {
   echo ""
-  echo "==> Fetching PX4 Gazebo SITL Models"
+  echo "==> Checking PX4 Gazebo SITL Models submodule/source directory"
   echo ""
 
-  ensure_git_repo_or_clone \
-    "https://github.com/mhcho1994/PX4-gazebo-models" \
-    "main" \
-    "${PX4_SITL_MODELS_DIR}"
+  ensure_submodule_present "${PX4_SITL_MODELS_DIR}" "PX4-gazebo-models"
+
+  echo "PX4 Gazebo SITL Models source directory is present: ${PX4_SITL_MODELS_DIR}"
 }
 
 px4_gz_models_env() {
@@ -727,24 +726,22 @@ ardupilot_gz_plugin_deps() {
 
 ardupilot_gz_plugin_fetch() {
   echo ""
-  echo "==> Fetching ArduPilot Gazebo plugin"
+  echo "==> Checking ArduPilot Gazebo plugin submodule/source directory"
   echo ""
 
-  ensure_git_repo_or_clone \
-    "https://github.com/mhcho1994/ardupilot_gazebo" \
-    "main" \
-    "${ARDUPILOT_GZ_DIR}"
+  ensure_submodule_present "${ARDUPILOT_GZ_DIR}" "ardupilot_gazebo"
+
+  echo "ArduPilot Gazebo plugin source directory is present: ${ARDUPILOT_GZ_DIR}"
 }
 
 sitl_models_fetch() {
   echo ""
-  echo "==> Fetching Ardupilot Gazebo SITL Models"
+  echo "==> Checking ArduPilot Gazebo SITL Models submodule/source directory"
   echo ""
 
-  ensure_git_repo_or_clone \
-    "https://github.com/mhcho1994/SITL_Models" \
-    "master" \
-    "${ARDUPILOT_SITL_MODELS_DIR}"
+  ensure_submodule_present "${ARDUPILOT_SITL_MODELS_DIR}" "SITL_Models"
+
+  echo "ArduPilot Gazebo SITL Models source directory is present: ${ARDUPILOT_SITL_MODELS_DIR}"
 }
 
 ardupilot_gz_plugin_build() {
