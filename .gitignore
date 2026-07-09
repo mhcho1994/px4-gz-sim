@@ -33,8 +33,9 @@ __pycache__/
 # Simulation Logs / Data
 # ================================
 
-# All generated logs (PX4, ArduPilot, Gazebo, etc.)
+# All generated logs (PX4, ArduPilot, Gazebo, etc.) and analysis results
 /data/*
+/results/*
 
 # Keep documentation and ignore rules inside data directory
 !/data/README.md
