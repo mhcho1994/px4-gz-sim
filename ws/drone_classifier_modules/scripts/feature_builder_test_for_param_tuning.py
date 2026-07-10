@@ -1,14 +1,15 @@
-import sys
-import os
 import argparse
+import os
+import sys
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-import data_extractor
-import kinematic_processor
-import flight_segmenter
 from pathlib import Path
 
+import data_extractor
+import flight_segmenter
 import generate_visualizations
+import kinematic_processor
 
 parser = argparse.ArgumentParser(description="Test feature builder parameters on specific logs.")
 parser.add_argument('--files', nargs='*', help='List of log files to process. If not provided, default test files will be used.')
@@ -29,10 +30,13 @@ test_files = args.files if args.files else default_test_files
 
 for file_path_str in test_files:
     file_path = Path(file_path_str)
-    base_dir = Path(*file_path.parts[:2])
-    dataset_name = file_path.parts[2]
-    run_name = file_path.parts[3]
-    output_dir = base_dir / f"{dataset_name}_viz" / run_name 
+    
+    # file_path.parts is ('data', 'sitl_logs', 'run_001', ...)
+    dataset_name = file_path.parts[1]
+    run_name = file_path.parts[2]
+    
+    # 통일된 저장 경로: results/sitl_logs_viz/run_001
+    output_dir = Path("results") / f"{dataset_name}_viz" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Info] Output directory: {output_dir}")
 

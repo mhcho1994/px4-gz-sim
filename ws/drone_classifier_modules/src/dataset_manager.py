@@ -1,12 +1,13 @@
 import os
-import numpy as np
 from pathlib import Path
 
-# Import our modular pipeline components
-from data_extractor import parse_px4_ulog, parse_ardu_bin, parse_real_csv
+import config
 import flight_segmenter
 import kinematic_processor
-import config
+import numpy as np
+# Import our modular pipeline components
+from data_extractor import parse_ardu_bin, parse_px4_ulog, parse_real_csv
+
 
 def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap', max_runs=None):
     """
@@ -28,7 +29,7 @@ def process_dataset_folder(base_folder, is_sitl=True, measurement_type='mocap', 
     
     # AI Classification Target Features
     target_features = config.TARGET_FEATURES
-    target_indices = [kinematic_processor.FEATURE_MAP[f] for f in target_features]
+    target_indices = [config.FEATURE_MAP[f] for f in target_features]
 
     for run_folder in run_folders:
         run_dir = base_dir / run_folder

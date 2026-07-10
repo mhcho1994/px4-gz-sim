@@ -1,6 +1,7 @@
 import numpy as np
-from pyulog import ULog
 from pymavlink import mavutil
+from pyulog import ULog
+
 
 def parse_px4_ulog(ulog_path):
     """

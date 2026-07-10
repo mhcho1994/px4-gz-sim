@@ -1,7 +1,9 @@
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 import pywt
+import config
+
 
 def plot_3d_trajectory_comparison(x1, y1, z1, x2, y2, z2, labels, title, save_path, colors=None):
     """Generates a 3D comparison of two trajectories, or a single one if x2 is None."""
@@ -57,24 +59,27 @@ def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_c
     """Visualizes the full flight with colored spans indicating different segments."""
     if features is None or len(features) == 0: return
 
-    feature_names = ['Altitude (m)', 'Heading (rad)', 'Z-Axis Velocity (m/s)', 'XY-Plane Speed (m/s)', 'Z-Axis Acceleration (m/s²)', 'XY-Plane Accel Norm (m/s²)', 'Z-Axis Jerk (m/s³)', 'XY-Plane Jerk Norm (m/s³)', 'Curvature (1/m)', 'Yaw rate (rad/s)']
+    feature_names = [feat.plot_label for feat in config.FEATURE_DEFINITIONS]
+    num_features = len(feature_names)
+    num_rows = (num_features + 1) // 2
     
-    fig, axes = plt.subplots(5, 2, figsize=(16, 18))
+    fig, axes = plt.subplots(num_rows, 2, figsize=(16, 3 * num_rows + 3))
     fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
     axes_flat = axes.flatten()
     
     span_colors = {'ascending': 'tab:orange', 'straight': 'tab:green', 'turn': 'tab:red', 'descending': 'tab:blue', 'hovering': 'tab:gray'}
 
-    for i in range(10):
+    for i in range(num_features):
         ax = axes_flat[i]
         ax.plot(t, features[:, i], color=line_color, linewidth=1.5, zorder=2)
         ax.set_title(feature_names[i], fontsize=12, fontweight='bold')
         ax.set_xlabel('Time (s)', fontsize=10)
         ax.grid(True, linestyle='--', alpha=0.5, zorder=1)
         
-        if i == 6: ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
-        elif i == 7: ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
-        elif i == 8: ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
+        feat_id = config.FEATURE_DEFINITIONS[i].id
+        if feat_id == 'JZ': ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
+        elif feat_id == 'XY-Jerk': ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
+        elif feat_id == 'Curvature': ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
 
         if spans:
             for s, e in spans.get('ascending', []): ax.axvspan(s, e, color=span_colors['ascending'], alpha=0.2, zorder=0)
@@ -82,6 +87,10 @@ def plot_full_trajectory_with_spans(t, features, spans, title, save_path, line_c
             for s, e in spans.get('straight', []): ax.axvspan(s, e, color=span_colors['straight'], alpha=0.2, zorder=0)
             for s, e in spans.get('turn', []): ax.axvspan(s, e, color=span_colors['turn'], alpha=0.4, zorder=0) 
             for s, e in spans.get('hovering', []): ax.axvspan(s, e, color=span_colors['hovering'], alpha=0.2, zorder=0) 
+            
+    # Hide any unused subplots
+    for j in range(num_features, len(axes_flat)):
+        fig.delaxes(axes_flat[j])
     
     if spans:
         legend_patches = [
@@ -102,23 +111,30 @@ def plot_turn_segment_features(t, features, title, save_path, line_color):
     """Zooms in and plots features only for a specific isolated turn segment."""
     if features is None or len(features) == 0: return
 
-    feature_names = ['Altitude (m)', 'Heading (rad)', 'Z-Axis Velocity (m/s)', 'XY-Plane Speed (m/s)', 'Z-Axis Acceleration (m/s²)', 'XY-Plane Accel Norm (m/s²)', 'Z-Axis Jerk (m/s³)', 'XY-Plane Jerk Norm (m/s³)', 'Curvature (1/m)', 'Yaw rate (rad/s)']
+    feature_names = [feat.plot_label for feat in config.FEATURE_DEFINITIONS]
+    num_features = len(feature_names)
+    num_rows = (num_features + 1) // 2
     
-    fig, axes = plt.subplots(5, 2, figsize=(16, 18))
+    fig, axes = plt.subplots(num_rows, 2, figsize=(16, 3 * num_rows + 3))
     fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
     axes_flat = axes.flatten()
     
-    for i in range(10):
+    for i in range(num_features):
         ax = axes_flat[i]
         ax.plot(t, features[:, i], color=line_color, linewidth=2.0, marker='o', markersize=4)
         ax.set_title(feature_names[i], fontsize=12, fontweight='bold')
         ax.set_xlabel('Absolute Time (s)', fontsize=10)
         ax.grid(True, linestyle='--', alpha=0.7)
         
-        if i == 6: ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
-        elif i == 7: ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
-        elif i == 8: ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
+        feat_id = config.FEATURE_DEFINITIONS[i].id
+        if feat_id == 'JZ': ax.set_ylim(np.nanpercentile(features[:, i], 2), np.nanpercentile(features[:, i], 98))
+        elif feat_id == 'XY-Jerk': ax.set_ylim(-1, np.nanpercentile(features[:, i], 98))
+        elif feat_id == 'Curvature': ax.set_ylim(-0.1, np.nanpercentile(features[:, i], 98))
             
+    # Hide any unused subplots
+    for j in range(num_features, len(axes_flat)):
+        fig.delaxes(axes_flat[j])
+        
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -198,4 +214,94 @@ def plot_hmm_viterbi_states(t, probs, viterbi_labels, title, save_path):
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+def plot_turn_context_comparison(px4_data, ardu_data, target_indices, feature_names, title, save_path):
+    """
+    Plots the first turn segment (and +/- 2 seconds context) for PX4 and ArduPilot side-by-side.
+    Rows correspond to target features.
+    """
+    def get_first_turn_span(d):
+        turns = d['spans'].get('turn_left', []) + d['spans'].get('turn_right', [])
+        if not turns: return None
+        turns.sort(key=lambda x: x[0])
+        return turns[0]
+
+    px4_turn = get_first_turn_span(px4_data)
+    ardu_turn = get_first_turn_span(ardu_data)
+
+    if not px4_turn or not ardu_turn:
+        return # Cannot compare if one is missing
+
+    span_colors = {
+        'ascending': 'tab:orange', 
+        'straight': 'tab:green', 
+        'turn_left': 'tab:red', 
+        'turn_right': 'tab:red',
+        'turn': 'tab:red',
+        'descending': 'tab:blue', 
+        'hovering': 'tab:gray'
+    }
+
+    n_features = len(target_indices)
+    fig, axes = plt.subplots(n_features, 2, figsize=(16, 3 * n_features))
+    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
+
+    # Helper function to plot one column
+    def plot_column(ax_col, d, turn_span, col_title):
+        start_time, end_time = turn_span
+        window_start = start_time - 2.0
+        window_end = end_time + 2.0
+
+        t = d['t_full']
+        features = d['feat']
+        spans = d['spans']
+
+        # Get indices within window for plotting
+        idx = (t >= window_start) & (t <= window_end)
+        if not np.any(idx): return
+        t_window = t[idx]
+        feat_window = features[idx]
+
+        for i, f_idx in enumerate(target_indices):
+            ax = ax_col[i] if n_features > 1 else ax_col
+            ax.plot(t_window, feat_window[:, f_idx], color='black', linewidth=1.5)
+            ax.set_ylabel(feature_names[f_idx], fontsize=10, fontweight='bold')
+            ax.grid(True, linestyle='--', alpha=0.5, zorder=1)
+            ax.set_xlim(window_start, window_end)
+            
+            if i == 0:
+                ax.set_title(col_title, fontsize=14, fontweight='bold')
+            if i == n_features - 1:
+                ax.set_xlabel("Absolute Time (s)", fontsize=10)
+
+            # Add spans
+            for state_name, color in span_colors.items():
+                for s, e in spans.get(state_name, []):
+                    if e > window_start and s < window_end:
+                        ax.axvspan(max(s, window_start), min(e, window_end), color=color, alpha=0.3, zorder=0)
+
+    # Extract columns
+    if n_features > 1:
+        ax_px4 = axes[:, 0]
+        ax_ardu = axes[:, 1]
+    else:
+        ax_px4 = [axes[0]]
+        ax_ardu = [axes[1]]
+
+    plot_column(ax_px4, px4_data, px4_turn, "PX4 First Turn Context")
+    plot_column(ax_ardu, ardu_data, ardu_turn, "ArduPilot First Turn Context")
+
+    # Add Legend at the top
+    legend_patches = [
+        mpatches.Patch(color=span_colors['ascending'], alpha=0.3, label='Ascending'),
+        mpatches.Patch(color=span_colors['straight'], alpha=0.3, label='Straight'),
+        mpatches.Patch(color=span_colors['turn_left'], alpha=0.3, label='Turn (Target)'),
+        mpatches.Patch(color=span_colors['descending'], alpha=0.3, label='Descending'),
+        mpatches.Patch(color=span_colors['hovering'], alpha=0.3, label='Hovering')
+    ]
+    fig.legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, 0.95), ncol=5, fontsize=12)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.93])
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)

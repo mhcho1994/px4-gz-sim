@@ -1,5 +1,5 @@
-import numpy as np
 import config
+import numpy as np
 
 # ==============================================================================
 # [Module 1] Motion Primitive Probability & HMM Smoothing
@@ -82,6 +82,13 @@ def _smooth_with_viterbi(emission_probs):
     state_names = ["hovering", "ascending", "descending", "straight", "turn_left", "turn_right"]
     return np.array([state_names[idx] for idx in best_path])
 
+def get_segmentation_details(features):
+    """
+    Public interface to retrieve both emission probabilities and Viterbi smoothed labels.
+    """
+    probs = _calculate_emission_probs(features)
+    viterbi_labels = _smooth_with_viterbi(probs)
+    return probs, viterbi_labels
 
 # ==============================================================================
 # [Module 2] Legacy Interface Adapter (Plug-and-Play Output)
@@ -146,9 +153,9 @@ def extract_segments(features_dict, dt=None, min_turn_duration=None,
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
     import data_extractor
     import kinematic_processor
+    import matplotlib.pyplot as plt
 
     # 1. Parse raw data
     log_path = "./data/sitl_logs/run_003/ardu_logs/raw/logs/00000001.BIN"

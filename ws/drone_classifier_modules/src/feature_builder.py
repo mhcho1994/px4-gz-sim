@@ -2,6 +2,7 @@ import numpy as np
 import pywt
 from scipy.stats import kurtosis
 
+
 def compute_dwt_statistics(timeseries_matrix, waveletname='db4', level=3):
     """
     Extracts DWT-based statistical features from time-series data.

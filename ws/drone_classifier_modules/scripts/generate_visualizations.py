@@ -1,41 +1,37 @@
 import os
+import sys
 import argparse
-import numpy as np
-import matplotlib.pyplot as plt
+import concurrent.futures
 from pathlib import Path
+
+import numpy as np
 import pywt
+import matplotlib
+import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import matplotlib.patches as mpatches
 
-# Use 'Agg' backend for non-interactive environments (WSL, Servers)
-import matplotlib
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 matplotlib.use('Agg')
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from data_extractor import parse_px4_ulog, parse_ardu_bin, parse_real_csv
-from kinematic_processor import compute_kinematics_diff, FEATURE_MAP
-import kinematic_processor
-from flight_segmenter import extract_segments, _calculate_emission_probs, _smooth_with_viterbi
 import config
-
-# =====================================================================
-# 1. Helper Functions for New Plot Types
-# =====================================================================
-
+import kinematic_processor
+from data_extractor import parse_px4_ulog, parse_ardu_bin, parse_real_csv
+from kinematic_processor import compute_kinematics_diff
+from flight_segmenter import extract_segments, get_segmentation_details
 from visualization_utils import (
     plot_3d_trajectory_comparison,
     plot_state_variables,
     plot_full_trajectory_with_spans,
     plot_turn_segment_features,
     plot_dwt_features,
-    plot_hmm_viterbi_states
+    plot_hmm_viterbi_states,
+    plot_turn_context_comparison
 )
 
-def generate_comparison_plots(data_store, run_folder, save_path_run):
-    """Generates comparison plots (Type 0, Type 1) for SITL data."""
+def generate_comparison_plots(data_store, run_folder, save_path_run, base_folder_name, selected_indices, all_feature_names):
+    """Generates comparison plots (Type 0, Type 1, and Custom Type 6) for SITL data."""
     # Type 0: Trajectory 3D Plot (Combined)
     p = data_store['px4']['raw_xy']
     a = data_store['ardu']['raw_xy']
@@ -53,6 +49,22 @@ def generate_comparison_plots(data_store, run_folder, save_path_run):
         f"State Variables Comparison ({run_folder})",
         str(save_path_run / f"{run_folder}_1_combined_states.png")
     )
+
+    # Type 6: First Turn Context Comparison (Only for specific folder)
+    if base_folder_name == "sitl_logs":
+        heading_idx = config.FEATURE_MAP.get('Heading', 1)
+        xyspeed_idx = config.FEATURE_MAP.get('XY-Speed', 3)
+        
+        type6_indices = [heading_idx, xyspeed_idx] + [idx for idx in selected_indices if idx not in (heading_idx, xyspeed_idx)]
+        
+        plot_turn_context_comparison(
+            data_store['px4'], 
+            data_store['ardu'], 
+            type6_indices, 
+            all_feature_names, 
+            f"First Turn Context Comparison ({run_folder})",
+            str(save_path_run / f"{run_folder}_6_turn_context_comparison.png")
+        )
 
 def generate_individual_plots(data_store, run_folder, save_path_run, selected_indices, all_feature_names, include_trajectory=True):
     """Generates individual plots (Type 0-5) for each firmware."""
@@ -120,8 +132,6 @@ def generate_individual_plots(data_store, run_folder, save_path_run, selected_in
                     color=d['color']
                 )
 
-import concurrent.futures
-
 def process_single_run(run_folder, base_folder_name, is_sitl, selected_indices, all_feature_names):
     BASE_DATA_DIR = Path("data") / base_folder_name
     SAVE_BASE_DIR = Path("results") / f"{base_folder_name}_viz"
@@ -155,8 +165,7 @@ def process_single_run(run_folder, base_folder_name, is_sitl, selected_indices, 
                         kinematic_features = kinematic_processor.compute_kinematics_pca(raw_data)
                         segs, spans = extract_segments(kinematic_features)
                         
-                        probs = _calculate_emission_probs(kinematic_features)
-                        viterbi_labels = _smooth_with_viterbi(probs)
+                        probs, viterbi_labels = get_segmentation_details(kinematic_features)
 
                         states = np.vstack((raw_data['x'], raw_data['y'], raw_data['z'], 
                                             raw_data['vx'], raw_data['vy'], raw_data['vz'])).T
@@ -171,15 +180,10 @@ def process_single_run(run_folder, base_folder_name, is_sitl, selected_indices, 
 
     # 2. Generate Plots
     if is_sitl and 'px4' in data_store and 'ardu' in data_store:
-        generate_comparison_plots(data_store, run_folder, save_path_run)
+        generate_comparison_plots(data_store, run_folder, save_path_run, base_folder_name, selected_indices, all_feature_names)
         generate_individual_plots(data_store, run_folder, save_path_run, selected_indices, all_feature_names, include_trajectory=False)
     else:
         generate_individual_plots(data_store, run_folder, save_path_run, selected_indices, all_feature_names, include_trajectory=True)
-
-
-# =====================================================================
-# 2. Main Visualization Engine
-# =====================================================================
 
 def run_visualization_pipeline(base_folder_name, is_sitl=True, max_runs=None):
     BASE_DATA_DIR = Path("data") / base_folder_name
@@ -195,16 +199,16 @@ def run_visualization_pipeline(base_folder_name, is_sitl=True, max_runs=None):
         print(f"[Info] Limiting visualization to {max_runs} runs (out of {len(run_folders)}).")
         run_folders = run_folders[:max_runs]
 
-    # All feature names for reference
-    all_feature_names = ['Alt', 'Heading', 'VZ', 'XY-Speed', 'AZ', 'XY-Accel', 'JZ', 'XY-Jerk', 'Curvature', 'YawRate', 'Slip']
+    # Get feature names and indices directly from config definitions
+    all_feature_names = [feat.plot_label for feat in config.FEATURE_DEFINITIONS]
     target_features_dwt = config.TARGET_FEATURES
-    selected_indices = [FEATURE_MAP[f] for f in target_features_dwt]
+    selected_indices = [config.FEATURE_MAP[f] for f in target_features_dwt]
 
     print(f"\n[Info] Starting multiprocessing for {len(run_folders)} runs...")
     
     # Process runs in parallel
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        futures = [
+        future_to_folder = {
             executor.submit(
                 process_single_run, 
                 run_folder, 
@@ -212,16 +216,17 @@ def run_visualization_pipeline(base_folder_name, is_sitl=True, max_runs=None):
                 is_sitl, 
                 selected_indices, 
                 all_feature_names
-            ) 
+            ): run_folder 
             for run_folder in run_folders
-        ]
+        }
         
         # Wait for all futures to complete
-        for future in concurrent.futures.as_completed(futures):
+        for future in concurrent.futures.as_completed(future_to_folder):
+            run_folder = future_to_folder[future]
             try:
                 future.result()
             except Exception as exc:
-                print(f"[Error] A run generated an exception: {exc}")
+                print(f"[Error] Exception generated while processing {run_folder}: {exc}")
 
 def main():
     parser = argparse.ArgumentParser(description="Generate flight visualizations from logs.")

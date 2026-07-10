@@ -1,14 +1,16 @@
+import argparse
 import os
 import sys
+
 import numpy as np
-import argparse
 
 # Add src/ to the python path so modules can be imported directly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
+import config
 import dataset_manager
 from feature_builder import compute_dwt_statistics, pad_sequences
-import config
+
 
 def main():
     parser = argparse.ArgumentParser(description="Extract features from flight logs.")

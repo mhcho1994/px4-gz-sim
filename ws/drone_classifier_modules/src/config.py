@@ -1,5 +1,6 @@
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 # ==========================================
 # 1. Directory & Path Settings
@@ -10,11 +11,12 @@ CACHE_DIR = BASE_DIR / "cache"
 # ==========================================
 # 2. Dataset Settings
 # ==========================================
-SITL_FOLDER = "260615_sitl_logs"
+SITL_FOLDER = "sitl_logs"
 REAL_FLIGHT_FOLDERS = ["260527_flight_logs_1", "260527_flight_logs_2"]
 
 from dataclasses import dataclass
 from typing import List, Optional
+
 
 @dataclass
 class FwConfig:
@@ -50,6 +52,27 @@ def find_fw_dir(run_dir: Path, fw_name: str, sub_paths: List[str]) -> Optional[P
 # 3. Feature Extraction Settings
 # ==========================================
 TARGET_FEATURES = ['XY-Accel', 'XY-Jerk', 'Curvature']
+
+@dataclass
+class FeatureDef:
+    id: str
+    plot_label: str
+
+FEATURE_DEFINITIONS = [
+    FeatureDef('Altitude', 'Altitude (m)'),
+    FeatureDef('Heading',  'Heading (rad)'),
+    FeatureDef('VZ',       'Z-Axis Velocity (m/s)'),
+    FeatureDef('XY-Speed', 'XY-Plane Speed (m/s)'),
+    FeatureDef('AZ',       'Z-Axis Acceleration (m/s²)'),
+    FeatureDef('XY-Accel', 'XY-Plane Accel Norm (m/s²)'),
+    FeatureDef('JZ',       'Z-Axis Jerk (m/s³)'),
+    FeatureDef('XY-Jerk',  'XY-Plane Jerk Norm (m/s³)'),
+    FeatureDef('Curvature','Curvature (1/m)'),
+    FeatureDef('YawRate',  'Yaw rate (rad/s)'),
+    FeatureDef('SlipRate', 'Slip Rate')
+]
+
+FEATURE_MAP = {feat.id: idx for idx, feat in enumerate(FEATURE_DEFINITIONS)}
 WAVELET_NAME = 'db4'
 WAVELET_LEVEL = 3
 
@@ -62,7 +85,7 @@ HMM_A = np.array([
     [0.70, 0.10, 0.10, 0.10, 0.00, 0.00], # Hover
     [0.10, 0.70, 0.00, 0.20, 0.00, 0.00], # Take-off
     [0.10, 0.00, 0.80, 0.10, 0.00, 0.00], # Landing
-    [0.15, 0.00, 0.05, 0.50, 0.15, 0.15], # Straight
+    [0.15, 0.00, 0.05, 0.30, 0.25, 0.25], # Straight
     [0.00, 0.00, 0.00, 0.20, 0.70, 0.10], # Left_Turn
     [0.00, 0.00, 0.00, 0.20, 0.10, 0.70]  # Right_Turn
 ])

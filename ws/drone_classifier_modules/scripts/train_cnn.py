@@ -1,19 +1,23 @@
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
-from pathlib import Path
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, accuracy_score
-import sys
-import os
+from torch.utils.data import DataLoader, TensorDataset
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-# Import your existing evaluation utilities
-from evaluation_utils import plot_confusion_matrix, plot_pca_2d_projection, print_detailed_prediction_map
 import config
+# Import your existing evaluation utilities
+from evaluation_utils import (plot_confusion_matrix, plot_pca_2d_projection,
+                              print_detailed_prediction_map)
+
 
 # =====================================================================
 # 1. Define 1D-CNN Model Architecture
@@ -77,6 +81,7 @@ def scale_3d_sequences(X_train, X_test, X_real=None):
     return X_train_scaled, X_test_scaled, X_real_scaled
 
 import argparse
+
 
 # =====================================================================
 # 3. Main Execution Pipeline

@@ -1,12 +1,7 @@
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
-
-FEATURE_MAP = {
-    'Altitude': 0, 'Heading': 1, 'VZ': 2, 'XY-Speed': 3, 'AZ': 4,
-    'XY-Accel': 5, 'JZ': 6, 'XY-Jerk': 7, 'Curvature': 8,
-    'YawRate': 9, 'SlipRate': 10
-}
+import config
 
 def compute_kinematics_pca(raw_data, target_hz=20, window_sec=2.0, overlap_sec=1):
     """
@@ -195,8 +190,8 @@ def compute_kinematics_diff(raw_data_dict, window_len=200, poly_order=3):
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
     import data_extractor
+    import matplotlib.pyplot as plt
 
     # 1. Parse raw data
     log_path = "./data/sitl_logs/run_012/ardu_logs/raw/logs/00000001.BIN"
