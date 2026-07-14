@@ -39,7 +39,9 @@ def main():
     parser.add_argument("--cal-files", type=int, default=10,
                         help="SITL files per class used for centroids + auto-calibration (default: 10)")
     parser.add_argument("--no-wandb", action="store_true",
-                        help="Skip Weights & Biases logging")
+                        help="Force local-only output (skip the interactive prompt)")
+    parser.add_argument("--wandb", action="store_true",
+                        help="Force W&B logging (skip the interactive prompt)")
     args = parser.parse_args()
 
     # ── find checkpoint ──────────────────────────────────────────────────────
@@ -71,20 +73,39 @@ def main():
         model_path = Path(args.model)
     print(f"Model: {model_path}")
 
-    # ── wandb init ───────────────────────────────────────────────────────────
-    run = wandb.init(
-        project=WANDB_PROJECT,
-        name=f"eval_{model_path.stem}",
-        job_type="eval",
-        mode="disabled" if args.no_wandb else None,
-        config={
-            "model_path": str(model_path),
-            "cal_files":  args.cal_files,
-            "threshold_override": args.threshold,
-            "git_sha":    _git_sha(),
-        },
-    )
-    if not args.no_wandb:
+    # ── choose output mode: local table vs W&B ───────────────────────────────
+    if args.wandb:
+        use_wandb = True
+    elif args.no_wandb:
+        use_wandb = False
+    elif sys.stdin.isatty():
+        while True:
+            c = input("\nEvaluate real flights — output mode:\n"
+                      "  [1] Local table only (print + save JSON)\n"
+                      "  [2] W&B logging (table + artifact)\n"
+                      "Choice [1/2, default 1]: ").strip()
+            if c in ("", "1"):
+                use_wandb = False; break
+            if c == "2":
+                use_wandb = True; break
+            print("Please enter 1 or 2.")
+    else:
+        use_wandb = False   # non-interactive default → local
+
+    # ── wandb init (only if selected) ────────────────────────────────────────
+    run = None
+    if use_wandb:
+        run = wandb.init(
+            project=WANDB_PROJECT,
+            name=f"eval_{model_path.stem}",
+            job_type="eval",
+            config={
+                "model_path": str(model_path),
+                "cal_files":  args.cal_files,
+                "threshold_override": args.threshold,
+                "git_sha":    _git_sha(),
+            },
+        )
         # Snapshot all .py in this dir so the run is reproducible even with
         # uncommitted changes in the working tree.
         run.log_code(str(Path(__file__).parent))
@@ -155,7 +176,11 @@ def main():
         json.dump({"threshold": threshold, "results": results}, f, indent=2)
     print(f"\nResults → {out}")
 
-    # ── wandb logging ────────────────────────────────────────────────────────
+    # ── wandb logging (only if selected) ─────────────────────────────────────
+    if not use_wandb:
+        print("(local mode — W&B logging skipped)")
+        return
+
     wandb.run.summary.update({
         "ood/threshold":        threshold,
         "realflight/total":     len(results),
