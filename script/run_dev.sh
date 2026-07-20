@@ -10,10 +10,16 @@ export HOST_GID="$(id -g)"
 export HOST_USER_NAME="$(id -un)"
 export HOST_GROUP_NAME="$(id -gn)"
 
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PROJECT_ROOT="$(cd "${THIS_DIR}/.." && pwd)"
+COMPOSE_FILE="${PROJECT_ROOT}/docker/compose.yaml"
+COMPOSE=(docker compose -f "${COMPOSE_FILE}" --project-directory "${PROJECT_ROOT}")
+
 # X11 forwarding for GUI apps (QGC, Gazebo)
 export DISPLAY="${DISPLAY:-:0}"
 
 RECREATE=false
+RESET_SETUP=false
 USE_EXEC=false
 
 # -----------------------------
@@ -23,12 +29,13 @@ USE_EXEC=false
 # -----------------------------
 for arg in "$@"; do
     case "$arg" in
-        --recreate) RECREATE=true ;;
+        --recreate) RECREATE=true; RESET_SETUP=true ;;
         --exec)    USE_EXEC=true ;;
     esac
 done
 
 SERVICE="FIRE_flightstack_simulator"
+CONTAINER_NAME="fire_flightstack_sim"
 
 # Setup sentinel used by entrypoint
 SETUP_DONE=".docker_home/.setup_done"
@@ -40,6 +47,19 @@ cleanup() {
 trap cleanup EXIT
 xhost +local:docker
 
+container_display() {
+    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null \
+        | awk -F= '$1=="DISPLAY" {print $2; exit}'
+}
+
+if docker ps -a --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
+    EXISTING_DISPLAY="$(container_display || true)"
+    if [[ -n "${EXISTING_DISPLAY}" && "${EXISTING_DISPLAY}" != "${DISPLAY}" ]]; then
+        echo "[INFO] Container DISPLAY (${EXISTING_DISPLAY}) differs from host DISPLAY (${DISPLAY}); recreating container."
+        RECREATE=true
+    fi
+fi
+
 
 # -----------------------------
 # Enter container either by:
@@ -49,10 +69,10 @@ xhost +local:docker
 enter_container() {
     if $USE_EXEC; then
         echo "[INFO] Entering container via exec..."
-        docker compose exec -u user -it "${SERVICE}" bash
+        "${COMPOSE[@]}" exec -u user -it "${SERVICE}" bash
     else
         echo "[INFO] Attaching to container..."
-        docker compose attach "${SERVICE}"
+        "${COMPOSE[@]}" attach "${SERVICE}"
     fi
 }
 
@@ -63,21 +83,21 @@ if $RECREATE; then
     # Remove setup sentinel so entrypoint
     # reruns project setup
     # -----------------------------
-    if [[ -f "${SETUP_DONE}" ]]; then
+    if $RESET_SETUP && [[ -f "${SETUP_DONE}" ]]; then
         echo "[INFO] Removing ${SETUP_DONE}"
         rm -f "${SETUP_DONE}"
     fi
 
-    if docker compose ps -a --services --filter status=running \
+    if "${COMPOSE[@]}" ps -a --services --filter status=running \
         | grep -q "^${SERVICE}$"; then
-        docker compose down
+        "${COMPOSE[@]}" down
     fi
 
     echo "[INFO] Recreating container..."
-    docker compose up --force-recreate
+    "${COMPOSE[@]}" up --force-recreate
 
 else
-    if docker compose ps -a --services --filter status=running \
+    if "${COMPOSE[@]}" ps -a --services --filter status=running \
         | grep -q "^${SERVICE}$"; then
 
         # -----------------------------
@@ -87,7 +107,7 @@ else
         echo "[INFO] Existing container already running."
         enter_container
 
-    elif docker compose ps -a --services \
+    elif "${COMPOSE[@]}" ps -a --services \
         | grep -q "^${SERVICE}$"; then
 
         # -----------------------------
@@ -95,7 +115,7 @@ else
         # restart existing one only
         # -----------------------------
         echo "[INFO] Starting existing container..."
-        docker compose start "${SERVICE}"
+        "${COMPOSE[@]}" start "${SERVICE}"
         enter_container
 
     else
@@ -109,6 +129,6 @@ else
         fi
 
         echo "[INFO] No container found. Building first time..."
-        docker compose up
+        "${COMPOSE[@]}" up
     fi
 fi

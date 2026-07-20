@@ -231,7 +231,13 @@ echo "Updated ${BASHRC} (managed block inserted/updated)."
 # --------------------------
 if command -v rosdep >/dev/null 2>&1; then
   sudo rosdep init 2>/dev/null || true
-  rosdep update
+  if ! rosdep update; then
+    echo "WARNING: rosdep update failed; retrying once after a short delay." >&2
+    sleep 5
+    if ! rosdep update; then
+      echo "WARNING: rosdep update failed again. Continuing with any existing rosdep cache." >&2
+    fi
+  fi
 else
   echo "WARNING: rosdep not found. Install python3-rosdep first."
 fi

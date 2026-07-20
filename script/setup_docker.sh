@@ -25,6 +25,8 @@ set -euo pipefail
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$THIS_DIR/.." && pwd)"
+DOCKER_DIR="$PROJECT_ROOT/docker"
+DOCKERFILE="$DOCKER_DIR/Dockerfile"
 
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
@@ -211,7 +213,7 @@ parse_args() {
 check_prereqs() {
     require_cmd docker
     require_cmd bash
-    require_file "$PROJECT_ROOT/Dockerfile"
+    require_file "$DOCKERFILE"
 
     require_file "$PROJECT_ROOT/install/base.sh"
     require_file "$PROJECT_ROOT/install/ros2.sh"
@@ -276,7 +278,7 @@ build_image() {
         --build-arg HOST_GROUP_NAME="${CURRENT_USER}" \
         --build-arg HOST_GROUP_ID="${HOST_GID}" \
         -t "${image_ref}" \
-        -f "${PROJECT_ROOT}/Dockerfile" \
+        -f "${DOCKERFILE}" \
         "${PROJECT_ROOT}"
 
     log "Docker image built successfully: ${image_ref}"
@@ -389,6 +391,7 @@ run_container() {
 print_summary() {
     log "Configuration summary:"
     log "  PROJECT_ROOT   = ${PROJECT_ROOT}"
+    log "  DOCKERFILE     = ${DOCKERFILE}"
     log "  IMAGE          = ${IMAGE_NAME}:${IMAGE_TAG}"
     log "  CONTAINER      = ${CONTAINER_NAME}"
     log "  DO_FETCH       = ${DO_FETCH}"

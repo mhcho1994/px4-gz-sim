@@ -5,8 +5,8 @@ services:
     container_name: fire_flightstack_sim
     image: fire_flightstack_sim:latest
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ${PROJECT_ROOT:-..}
+      dockerfile: docker/Dockerfile
       args:
         UID_USER: ${HOST_UID}
         GID_USER: ${HOST_GID}
@@ -29,7 +29,7 @@ services:
     shm_size: "4gb"
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
-      - ./:/home/user/FIRE_flightstack_sim:rw
+      - ${PROJECT_ROOT:-..}:/home/user/FIRE_flightstack_sim:rw
     command:
       - --
       - bash
