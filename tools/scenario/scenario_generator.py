@@ -52,6 +52,9 @@ DEFAULT_VERTEX_RANGE_DEG = (0.0, 360.0)
 DEFAULT_ALT_RANGE_M = (5.0, 50.0)
 DEFAULT_SPEED_RANGE_M_S = (3.0, 12.0)
 DEFAULT_LANDING_ALT_M = 5.0
+DEFAULT_WIND_HORIZONTAL_MAGNITUDE_RANGE_M_S = (0.0, 10.0)
+DEFAULT_WIND_HORIZONTAL_AZIMUTH_RANGE_DEG = (0.0, 360.0)
+DEFAULT_WIND_VERTICAL_MAGNITUDE_RANGE_M_S = (0.0, 3.0)
 
 # ----------------------------------------------------------------------
 # MAVLink Command IDs
@@ -139,6 +142,48 @@ def _sample_float_spec(value, value_range: Tuple[float, float]) -> float:
         low, high = value_range
         return float(np.random.uniform(low, high))
     return float(value)
+
+
+def _sample_wind_direction_spec(value) -> int:
+    """Sample or normalize a vertical wind direction to either -1 or +1."""
+    if value == RANDOM_SPEC:
+        return int(np.random.choice((-1, 1)))
+    return int(value)
+
+
+def wind_to_enu(
+    horizontal_magnitude_m_s: float,
+    horizontal_azimuth_deg: float,
+    vertical_magnitude_m_s: float,
+    vertical_direction: int,
+) -> Tuple[float, float, float]:
+    """Convert wind polar inputs to a Gazebo ENU velocity vector.
+
+    Azimuth is the direction the velocity vector points toward, measured
+    clockwise from North: North=0, East=90, South=180, West=270 degrees.
+    Vertical direction +1 is up and -1 is down.
+    """
+    horizontal_magnitude_m_s = float(horizontal_magnitude_m_s)
+    horizontal_azimuth_deg = float(horizontal_azimuth_deg)
+    vertical_magnitude_m_s = float(vertical_magnitude_m_s)
+    vertical_direction = int(vertical_direction)
+
+    if horizontal_magnitude_m_s < 0.0:
+        raise ValueError("horizontal wind magnitude must be non-negative")
+    if not 0.0 <= horizontal_azimuth_deg <= 360.0:
+        raise ValueError("horizontal wind azimuth must be in [0, 360]")
+    if vertical_magnitude_m_s < 0.0:
+        raise ValueError("vertical wind magnitude must be non-negative")
+    if vertical_direction not in (-1, 1):
+        raise ValueError("vertical wind direction must be -1 or +1")
+
+    azimuth_rad = np.radians(horizontal_azimuth_deg)
+    east = horizontal_magnitude_m_s * np.sin(azimuth_rad)
+    north = horizontal_magnitude_m_s * np.cos(azimuth_rad)
+    up = vertical_magnitude_m_s * vertical_direction
+
+    # Avoid tiny floating-point artifacts such as cos(90 deg) ~= 6e-17.
+    return tuple(0.0 if abs(v) < 1e-12 else float(v) for v in (east, north, up))
 
 
 # ----------------------------------------------------------------------
@@ -395,6 +440,7 @@ def write_scenario_yaml(
     run_dir: Path,
     mission: MissionSpec,
     *,
+    wind_m_s: Tuple[float, float, float],
     ardupilot_dir: str,
     ardupilot_vehicle: str,
     ardupilot_frame: str,
@@ -467,6 +513,8 @@ def write_scenario_yaml(
                 "home_lla": [float(home[0]), float(home[1]), float(home[2])],
                 "takeoff_alt_m": float(mission.takeoff_alt_m),
                 "landing_alt_m": float(mission.landing_alt_m),
+                # Constant wind velocity in the Gazebo ENU frame: [east, north, up].
+                "wind_m_s": [float(v) for v in wind_m_s],
                 "altitude_mode": 1,
                 "land": bool(mission.land),
                 "command": [int(c) for c in mission.command],
@@ -635,6 +683,28 @@ def write_metadata_yaml(outdir: Path, args: argparse.Namespace) -> None:
         "simulation": {
             "environment": "Gazebo",
             "home_lla": [float(v) for v in args.home_lla],
+            "wind": {
+                "type": "constant",
+                "frame": "ENU",
+                "vector_order": ["east", "north", "up"],
+                "horizontal_magnitude_m_s": _metadata_value(
+                    args.wind_horizontal_magnitude_m_s,
+                    args.wind_horizontal_magnitude_m_s_range,
+                ),
+                "horizontal_azimuth_deg": _metadata_value(
+                    args.wind_horizontal_azimuth_deg,
+                    args.wind_horizontal_azimuth_deg_range,
+                ),
+                "vertical_magnitude_m_s": _metadata_value(
+                    args.wind_vertical_magnitude_m_s,
+                    args.wind_vertical_magnitude_m_s_range,
+                ),
+                "vertical_direction": (
+                    {"mode": "random_choice", "values": [-1, 1]}
+                    if args.wind_vertical_direction == RANDOM_SPEC
+                    else int(args.wind_vertical_direction)
+                ),
+            },
         },
         "flight_stacks": {
             "px4": {
@@ -705,6 +775,58 @@ def main() -> int:
         nargs=3,
         metavar=("LAT", "LON", "ALT"),
         default=(40.41176161953683, -86.93352081596879, 0.0),
+    )
+
+    # Constant wind in Gazebo's ENU world frame. Azimuth is the direction the
+    # vector points toward, clockwise from North (North=0, East=90 degrees).
+    common_parser.add_argument(
+        "--wind-horizontal-magnitude-m-s",
+        type=str,
+        default="0.0",
+        help='horizontal wind magnitude in m/s, or "random"',
+    )
+    common_parser.add_argument(
+        "--wind-horizontal-magnitude-m-s-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_WIND_HORIZONTAL_MAGNITUDE_RANGE_M_S,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when horizontal wind magnitude is random",
+    )
+    common_parser.add_argument(
+        "--wind-horizontal-azimuth-deg",
+        type=str,
+        default="0.0",
+        help='wind-vector azimuth in degrees (North=0, East=90), or "random"',
+    )
+    common_parser.add_argument(
+        "--wind-horizontal-azimuth-deg-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_WIND_HORIZONTAL_AZIMUTH_RANGE_DEG,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when horizontal wind azimuth is random",
+    )
+    common_parser.add_argument(
+        "--wind-vertical-magnitude-m-s",
+        type=str,
+        default="0.0",
+        help='vertical wind magnitude in m/s, or "random"',
+    )
+    common_parser.add_argument(
+        "--wind-vertical-magnitude-m-s-range",
+        type=float,
+        nargs=2,
+        default=DEFAULT_WIND_VERTICAL_MAGNITUDE_RANGE_M_S,
+        metavar=("MIN", "MAX"),
+        help="uniform range used when vertical wind magnitude is random",
+    )
+    common_parser.add_argument(
+        "--wind-vertical-direction",
+        type=str,
+        choices=("-1", "1", "+1", RANDOM_SPEC),
+        default="1",
+        help='vertical direction: 1=up, -1=down, or "random"',
     )
 
     # ArduPilot defaults
@@ -950,6 +1072,55 @@ def main() -> int:
     # --------------------------------------------------------------
     args = ap.parse_args()
 
+    try:
+        args.wind_horizontal_magnitude_m_s = parse_float_or_random(
+            args.wind_horizontal_magnitude_m_s
+        )
+        args.wind_horizontal_magnitude_m_s_range = parse_float_range(
+            list(args.wind_horizontal_magnitude_m_s_range)
+        )
+        args.wind_horizontal_azimuth_deg = parse_float_or_random(
+            args.wind_horizontal_azimuth_deg
+        )
+        args.wind_horizontal_azimuth_deg_range = parse_float_range(
+            list(args.wind_horizontal_azimuth_deg_range)
+        )
+        args.wind_vertical_magnitude_m_s = parse_float_or_random(
+            args.wind_vertical_magnitude_m_s
+        )
+        args.wind_vertical_magnitude_m_s_range = parse_float_range(
+            list(args.wind_vertical_magnitude_m_s_range)
+        )
+        if args.wind_vertical_direction != RANDOM_SPEC:
+            args.wind_vertical_direction = int(args.wind_vertical_direction)
+    except argparse.ArgumentTypeError as e:
+        ap.error(str(e))
+
+    if (
+        args.wind_horizontal_magnitude_m_s != RANDOM_SPEC
+        and args.wind_horizontal_magnitude_m_s < 0.0
+    ):
+        ap.error("--wind-horizontal-magnitude-m-s must be non-negative")
+    if args.wind_horizontal_magnitude_m_s_range[0] < 0.0:
+        ap.error("--wind-horizontal-magnitude-m-s-range must be non-negative")
+    if (
+        args.wind_horizontal_azimuth_deg != RANDOM_SPEC
+        and not 0.0 <= args.wind_horizontal_azimuth_deg <= 360.0
+    ):
+        ap.error("--wind-horizontal-azimuth-deg must be in [0, 360]")
+    if (
+        args.wind_horizontal_azimuth_deg_range[0] < 0.0
+        or args.wind_horizontal_azimuth_deg_range[1] > 360.0
+    ):
+        ap.error("--wind-horizontal-azimuth-deg-range must be within [0, 360]")
+    if (
+        args.wind_vertical_magnitude_m_s != RANDOM_SPEC
+        and args.wind_vertical_magnitude_m_s < 0.0
+    ):
+        ap.error("--wind-vertical-magnitude-m-s must be non-negative")
+    if args.wind_vertical_magnitude_m_s_range[0] < 0.0:
+        ap.error("--wind-vertical-magnitude-m-s-range must be non-negative")
+
     if args.pattern in ("planar_n_pts", "three_d_n_pts"):
         try:
             args.edge_m_range = parse_float_range(list(args.edge_m_range))
@@ -1027,6 +1198,28 @@ def main() -> int:
         run_dir = args.outdir / f"run_{run_id:03d}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        wind_horizontal_magnitude_m_s = _sample_float_spec(
+            args.wind_horizontal_magnitude_m_s,
+            args.wind_horizontal_magnitude_m_s_range,
+        )
+        wind_horizontal_azimuth_deg = _sample_float_spec(
+            args.wind_horizontal_azimuth_deg,
+            args.wind_horizontal_azimuth_deg_range,
+        )
+        wind_vertical_magnitude_m_s = _sample_float_spec(
+            args.wind_vertical_magnitude_m_s,
+            args.wind_vertical_magnitude_m_s_range,
+        )
+        wind_vertical_direction = _sample_wind_direction_spec(
+            args.wind_vertical_direction
+        )
+        wind_m_s = wind_to_enu(
+            wind_horizontal_magnitude_m_s,
+            wind_horizontal_azimuth_deg,
+            wind_vertical_magnitude_m_s,
+            wind_vertical_direction,
+        )
+
         if args.pattern == "planar_n_pts":
             edge_m = _sample_tuple_spec(args.edge_m, args.n - 1, args.edge_m_range)
             vertex_deg = _sample_tuple_spec(args.vertex_deg, args.n - 1, args.vertex_deg_range)
@@ -1066,6 +1259,7 @@ def main() -> int:
         write_scenario_yaml(
             run_dir,
             mission,
+            wind_m_s=wind_m_s,
             ardupilot_dir=args.ardupilot_dir,
             ardupilot_vehicle=args.ardupilot_vehicle,
             ardupilot_frame=args.ardupilot_frame,

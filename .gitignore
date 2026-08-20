@@ -15,6 +15,7 @@
 !/gz/ardupilot_gazebo
 !/gz/SITL_Models
 !/gz/PX4_gazebo_models
+!/gz/FIRE_moonshot_gazebo
 
 # QGroundControl binaries/tools (platform-dependent, not needed in repo)
 /tools/QGC

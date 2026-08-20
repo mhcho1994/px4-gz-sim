@@ -9,24 +9,28 @@
       "args": [
         "three_d_n_pts",
         "--outdir", "${workspaceFolder}/data/sitl_logs",
-        "--runs", "1000",
+        "--runs", "1",
         "--start-run-id", "0",
         "--ardupilot-vehicle", "ArduCopter",
-        "--ardupilot-frame", "gazebo-px4vision",
+        "--ardupilot-frame", "gazebo-iris", // "gazebo-px4vision",
         "--ardupilot-model", "JSON",
-        "--ardupilot-world", "px4vision_default",
+        "--ardupilot-world", "iris_default", // "px4vision_default",
         "--ardupilot-location", "Purdue",
-        "--px4-vehicle", "4001",
-        "--px4-frame", "gz_px4vision",
+        "--px4-vehicle", "4001", // "4006",
+        "--px4-frame", "gz_x500",
         "--px4-world", "default",
         "--px4-location", "Purdue",
-        "--n", "3",
-        "--edge-m", "25, 25", // "--edge-m-range", "2", "10",
+        "--n", "5",
+        "--edge-m", "random", "--edge-m-range", "5", "20",
         "--vertex-deg", "random", "--vertex-deg-range", "0", "360",
         "--speed-m-s", "random", "--speed-m-s-range", "1", "20",
         "--alt-m", "random", "--alt-m-range", "2", "20",
         "--takeoff-alt-m", "10",
-        "--landing-alt-m", "5"
+        "--landing-alt-m", "5",
+        "--wind-horizontal-magnitude-m-s", "0",
+        "--wind-horizontal-azimuth-deg", "0", 
+        "--wind-vertical-magnitude-m-s", "0",
+        "--wind-vertical-direction", "1",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
@@ -114,6 +118,38 @@
       "request": "launch",
       "program": "${workspaceFolder}/tools/commander/fake_gcs_heartbeat.py",
       "args": [
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true,
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    {
+      "name": "Debug: Projected Area Computation",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/auxiliary/compute_projected_area.py",
+      "args": [
+        "--mode", "raster",
+        "--input", "${workspaceFolder}/gz/FIRE_moonshot_gazebo/models/px4vision/meshes/body.dae",
+        "--output-directory", "${workspaceFolder}/results/auxiliary",
+        "--pixels-per-meter", "10000"
+      ]
+    },
+    {
+      "name": "Debug: Liftdrag to Motor Model Converter",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/auxiliary/liftdrag_to_motor_model.py",
+      "args": [
+        "--source", "${workspaceFolder}/gz/FIRE_moonshot_gazebo/models/px4vision/raw/model.ardupilot.sdf",
+        "--rotor-link", "rotor_0",
+        "--analysis-output", "${workspaceFolder}/results/auxiliary",
+        "--model-output", "gz/FIRE_moonshot_gazebo/models/rotor_test/model.sdf",
+        "--world-output", "gz/FIRE_moonshot_gazebo/worlds/default_rotor_test.sdf" 
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
